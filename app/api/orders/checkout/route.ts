@@ -1,6 +1,11 @@
+// app/api/orders/checkout/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { resend, FROM } from "@/lib/resend";
+import { getResend, FROM } from "@/lib/resend";
+
+// מומלץ: הבטחת ריצה על Node ושהנתיב לא יעבור סטטיזציה
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 // ---- Types ----
 type CartItem = { id: string; quantity: number };
@@ -63,16 +68,16 @@ function renderSupplierEmail(params: {
 // ---- Route ----
 export async function POST(req: NextRequest) {
   try {
-    // 0) Auth header from client
+    // 0) Auth header מהלקוח
     const authHeader = req.headers.get("authorization") || ""; // "Bearer <token>"
 
-    // Create a Supabase client that forwards the Authorization header
+    // Supabase client שמקבל את ה־Authorization קדימה ל-RLS
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
       auth: { persistSession: false },
     });
 
-    // 1) User check
+    // 1) משתמש
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -80,14 +85,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    // 2) Payload
+    // 2) גוף הבקשה
     const body = await req.json().catch(() => null);
     const cart: CartItem[] = Array.isArray(body?.cart) ? body.cart : [];
     if (!cart.length) {
       return NextResponse.json({ error: "empty cart" }, { status: 400 });
     }
 
-    // 3) Fetch products (for validation + supplier mapping)
+    // 3) אימות מוצרים ומיפוי ספקים
     const ids = cart.map((c) => c.id);
     const { data: products, error: prodErr } = await supabase
       .from("products")
@@ -101,7 +106,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4) Create order
+    // 4) יצירת הזמנה
     const { data: order, error: orderErr } = await supabase
       .from("orders")
       .insert({ user_id: user.id })
@@ -115,7 +120,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 5) Insert order items
+    // 5) פריטי הזמנה
     const items = cart.map((c) => ({
       order_id: order.id,
       product_id: c.id,
@@ -128,7 +133,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: itemsErr.message }, { status: 500 });
     }
 
-    // 6) Group by supplier & send emails
+    // 6) קיבוץ לפי ספק ושליחת מיילים
     const bySupplier = new Map<
       string,
       {
@@ -137,18 +142,17 @@ export async function POST(req: NextRequest) {
         lines: { name: string; qty: number; price: number }[];
       }
     >();
+
     for (const c of cart) {
       const p = products.find((x) => x.id === c.id);
       if (!p?.supplier_id) continue;
       if (!bySupplier.has(p.supplier_id))
         bySupplier.set(p.supplier_id, { name: "", email: null, lines: [] });
-      bySupplier
-        .get(p.supplier_id)!
-        .lines.push({
-          name: p.name,
-          qty: Number(c.quantity),
-          price: Number(p.price),
-        });
+      bySupplier.get(p.supplier_id)!.lines.push({
+        name: p.name,
+        qty: Number(c.quantity),
+        price: Number(p.price),
+      });
     }
 
     if (bySupplier.size) {
@@ -166,25 +170,35 @@ export async function POST(req: NextRequest) {
         }
       });
 
-      const sends = Array.from(bySupplier.values()).map(async (s) => {
-        if (!s.email) return;
-        const html = renderSupplierEmail({
-          supplierName: s.name || "Supplier",
-          orderId: order.id,
-          lines: s.lines,
-        });
-        await resend.emails.send({
-          from: FROM,
-          to: s.email,
-          subject: `New order ${order.id.slice(0, 8)} – ${s.lines.reduce(
-            (n, l) => n + l.qty,
-            0
-          )} items`,
-          html,
-        });
-      });
+      // הכנת לקוח Resend באופן בטוח
+      const resend = await getResend();
 
-      await Promise.allSettled(sends);
+      if (resend) {
+        const sends = Array.from(bySupplier.values()).map(async (s) => {
+          if (!s.email) return;
+          const html = renderSupplierEmail({
+            supplierName: s.name || "Supplier",
+            orderId: order.id,
+            lines: s.lines,
+          });
+          await resend.emails.send({
+            from: FROM,
+            to: s.email,
+            subject: `New order ${order.id.slice(0, 8)} – ${s.lines.reduce(
+              (n, l) => n + l.qty,
+              0
+            )} items`,
+            html,
+          });
+        });
+
+        await Promise.allSettled(sends);
+      } else {
+        console.warn(
+          "[resend] Missing API key; skipping supplier emails for order",
+          order.id
+        );
+      }
     }
 
     return NextResponse.json({ ok: true, orderId: order.id });
