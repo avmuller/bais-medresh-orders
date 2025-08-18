@@ -1,4 +1,5 @@
 import "@/styles/globals.css";
+import AutoLogout from "@/components/AutoLogout"; // ← חשוב: קיים כ־client component
 
 export default function RootLayout({
   children,
@@ -6,8 +7,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="he" dir="rtl">
+      <body>
+        {/* יתנתק אוטומטית אחרי 30 דקות חוסר פעילות (אפשר לשנות) */}
+        <AutoLogout minutes={30} />
+        {children}
+      </body>
     </html>
   );
 }

@@ -6,6 +6,16 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useHybridCart } from "@/hooks/useHybridCart";
 
+// Add loading spinner component
+const Spinner = () => (
+  <div className="inline-block animate-spin h-4 w-4 border-2 border-gray-300 border-t-gray-600 rounded-full" />
+);
+
+// Add error message component
+const ErrorMessage = ({ message }: { message: string }) => (
+  <div className="bg-red-50 text-red-600 p-3 rounded-md mb-4">{message}</div>
+);
+
 export default function CartPage() {
   const router = useRouter();
 
@@ -15,6 +25,7 @@ export default function CartPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // טעינת משתמש
   useEffect(() => {
@@ -26,57 +37,75 @@ export default function CartPage() {
     })();
   }, []);
 
+  const handleClearCart = () => {
+    if (window.confirm("האם אתה בטוח שברצונך לנקות את העגלה?")) {
+      clearCart();
+    }
+  };
+
   const handleCreateOrder = async () => {
+    setError(null);
     if (cart.length === 0) {
-      alert("העגלה ריקה!");
+      setError("העגלה ריקה!");
       return;
     }
 
     setSubmitting(true);
 
+    // ודא סשן (לשליחת Bearer token ל-API)
     const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (!user || userError) {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session) {
       alert("יש להתחבר כדי לבצע הזמנה");
       router.push("/auth");
       setSubmitting(false);
       return;
     }
 
-    const { data: orderData, error: orderError } = await supabase
-      .from("orders")
-      .insert({ user_id: user.id })
-      .select()
-      .single();
+    try {
+      const res = await fetch("/api/orders/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          cart: cart.map((i) => ({ id: i.id, quantity: i.quantity })),
+        }),
+      });
 
-    if (orderError || !orderData) {
-      alert("שגיאה ביצירת הזמנה: " + (orderError?.message ?? ""));
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || res.statusText);
+
+      // 📝 שמירת תקציר הזמנה ל-sessionStorage כדי להציג בדף תודה
+      try {
+        const snapshot = {
+          orderId: j.orderId as string | undefined,
+          createdAt: new Date().toISOString(),
+          items: cart.map((i) => ({
+            name: i.name,
+            price: Number(i.price),
+            qty: i.quantity,
+            image_url: i.image_url ?? null,
+          })),
+          total: cart.reduce((s, i) => s + Number(i.price) * i.quantity, 0),
+          count: cart.reduce((s, i) => s + i.quantity, 0),
+        };
+        sessionStorage.setItem("last_order", JSON.stringify(snapshot));
+      } catch {}
+
+      clearCart();
+
+      // נווט עם מזהה הזמנה אם קיים
+      const orderId = j.orderId as string | undefined;
+      router.push(orderId ? `/order/thanks?order=${orderId}` : "/order/thanks");
+    } catch (err: any) {
+      setError(err?.message || "שגיאה לא ידועה");
+    } finally {
       setSubmitting(false);
-      return;
     }
-
-    const itemsToInsert = cart.map((it) => ({
-      order_id: orderData.id,
-      product_id: it.id, // UUID כמחרוזת
-      quantity: it.quantity,
-    }));
-
-    const { error: itemsError } = await supabase
-      .from("order_items")
-      .insert(itemsToInsert);
-
-    if (itemsError) {
-      alert("שגיאה בהוספת פריטים להזמנה: " + itemsError.message);
-      setSubmitting(false);
-      return;
-    }
-
-    clearCart();
-    alert("✅ ההזמנה בוצעה בהצלחה!");
-    setSubmitting(false);
-    router.push("/orders/thanks"); // אם יש דף תודה
   };
 
   // הצג טעינה קלה עד שהעגלה נטענת מה־storage
@@ -119,6 +148,8 @@ export default function CartPage() {
 
       {/* Content */}
       <div className="max-w-5xl mx-auto px-4 py-6">
+        {error && <ErrorMessage message={error} />}
+
         {cart.length === 0 ? (
           <div className="text-center text-gray-600">
             העגלה ריקה.{" "}
@@ -128,88 +159,91 @@ export default function CartPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            <div className="overflow-hidden rounded-xl border">
-              <table className="w-full text-right">
-                <thead className="bg-gray-50">
-                  <tr className="text-sm text-gray-600">
-                    <th className="p-3">מוצר</th>
-                    <th className="p-3">מחיר יחידה</th>
-                    <th className="p-3">כמות</th>
-                    <th className="p-3">סה"כ</th>
-                    <th className="p-3">פעולות</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cart.map((item) => (
-                    <tr key={item.id} className="border-t">
-                      <td className="p-3">
-                        <div className="flex items-center gap-3">
-                          {item.image_url ? (
-                            <img
-                              src={item.image_url}
-                              alt={item.name}
-                              className="w-14 h-14 rounded object-cover border"
-                            />
-                          ) : (
-                            <div className="w-14 h-14 rounded border grid place-items-center text-xs text-gray-400">
-                              ללא תמונה
-                            </div>
-                          )}
-                          <div className="font-medium">{item.name}</div>
-                        </div>
-                      </td>
-                      <td className="p-3 whitespace-nowrap">
-                        {Number(item.price).toFixed(2)} ₪
-                      </td>
-                      <td className="p-3">
-                        <div className="inline-flex items-center gap-2">
-                          <button
-                            onClick={() => updateQty(item.id, -1)}
-                            className="w-8 h-8 rounded-md border hover:bg-gray-50"
-                          >
-                            −
-                          </button>
-                          <div className="w-10 text-center">
-                            {item.quantity}
-                          </div>
-                          <button
-                            onClick={() => updateQty(item.id, 1)}
-                            className="w-8 h-8 rounded-md border hover:bg-gray-50"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </td>
-                      <td className="p-3 whitespace-nowrap">
-                        {(item.price * item.quantity).toFixed(2)} ₪
-                      </td>
-                      <td className="p-3">
-                        <button
-                          onClick={() => removeItem(item.id)}
-                          className="px-3 py-1.5 text-sm rounded-md bg-red-600 text-white hover:bg-red-700"
-                        >
-                          הסר
-                        </button>
-                      </td>
+            {/* Responsive table wrapper */}
+            <div className="overflow-x-auto">
+              <div className="overflow-hidden rounded-xl border min-w-[640px]">
+                <table className="w-full text-right">
+                  <thead className="bg-gray-50">
+                    <tr className="text-sm text-gray-600">
+                      <th className="p-3">מוצר</th>
+                      <th className="p-3">מחיר יחידה</th>
+                      <th className="p-3">כמות</th>
+                      <th className="p-3">סה"כ</th>
+                      <th className="p-3">פעולות</th>
                     </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-gray-50 font-semibold">
-                    <td className="p-3" colSpan={3}>
-                      סה"כ לתשלום
-                    </td>
-                    <td className="p-3">{total.toFixed(2)} ₪</td>
-                    <td className="p-3"></td>
-                  </tr>
-                </tfoot>
-              </table>
+                  </thead>
+                  <tbody>
+                    {cart.map((item) => (
+                      <tr key={item.id} className="border-t">
+                        <td className="p-3">
+                          <div className="flex items-center gap-3">
+                            {item.image_url ? (
+                              <img
+                                src={item.image_url}
+                                alt={item.name}
+                                className="w-14 h-14 rounded object-cover border"
+                              />
+                            ) : (
+                              <div className="w-14 h-14 rounded border grid place-items-center text-xs text-gray-400">
+                                ללא תמונה
+                              </div>
+                            )}
+                            <div className="font-medium">{item.name}</div>
+                          </div>
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          {Number(item.price).toFixed(2)} ₪
+                        </td>
+                        <td className="p-3">
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              onClick={() => updateQty(item.id, -1)}
+                              className="w-8 h-8 rounded-md border hover:bg-gray-50"
+                            >
+                              −
+                            </button>
+                            <div className="w-10 text-center">
+                              {item.quantity}
+                            </div>
+                            <button
+                              onClick={() => updateQty(item.id, 1)}
+                              className="w-8 h-8 rounded-md border hover:bg-gray-50"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          {(Number(item.price) * item.quantity).toFixed(2)} ₪
+                        </td>
+                        <td className="p-3">
+                          <button
+                            onClick={() => removeItem(item.id)}
+                            className="px-3 py-1.5 text-sm rounded-md bg-red-600 text-white hover:bg-red-700"
+                          >
+                            הסר
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-gray-50 font-semibold">
+                      <td className="p-3" colSpan={3}>
+                        סה"כ לתשלום
+                      </td>
+                      <td className="p-3">{total.toFixed(2)} ₪</td>
+                      <td className="p-3"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
 
             <div className="flex items-center justify-between">
               <button
-                onClick={clearCart}
-                className="px-4 py-2 border rounded-md hover:bg-gray-50"
+                onClick={handleClearCart}
+                className="px-4 py-2 border rounded-md hover:bg-gray-50 focus:ring-2 focus:ring-gray-200"
               >
                 נקה עגלה
               </button>
@@ -217,9 +251,15 @@ export default function CartPage() {
               <button
                 onClick={handleCreateOrder}
                 disabled={submitting}
-                className="px-6 py-2 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                className="px-6 py-2 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 focus:ring-2 focus:ring-green-500"
               >
-                {submitting ? "שולח..." : "בצע הזמנה"}
+                {submitting ? (
+                  <span className="flex items-center gap-2">
+                    <Spinner /> שולח...
+                  </span>
+                ) : (
+                  "בצע הזמנה"
+                )}
               </button>
             </div>
           </div>
@@ -228,3 +268,4 @@ export default function CartPage() {
     </div>
   );
 }
+import { useRef } from "react";

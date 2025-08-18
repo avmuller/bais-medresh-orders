@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import Image from "next/image"; // ✅ לשימוש בתמונות יפות ומהירות
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useHybridCart } from "@/hooks/useHybridCart";
@@ -108,11 +108,13 @@ export default function OrderPage() {
     return (
       <button
         onClick={() => setSelectedCat(id)}
-        className={`px-3 py-1.5 rounded-full text-sm transition ${
-          active
-            ? "bg-blue-600 text-white shadow-sm"
-            : "bg-white hover:bg-gray-50 border"
-        }`}
+        className={`px-3 py-1.5 rounded-full text-sm transition
+          border shadow-xs
+          ${
+            active
+              ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+              : "bg-white/80 text-gray-700 hover:bg-white hover:shadow-sm"
+          }`}
       >
         {label}
       </button>
@@ -120,15 +122,33 @@ export default function OrderPage() {
   };
 
   return (
-    <div dir="rtl" className="min-h-screen bg-gray-50">
+    <div
+      dir="rtl"
+      className="min-h-screen bg-gradient-to-b from-indigo-50 via-white to-blue-50"
+    >
+      {/* Decorative background blobs */}
+      <div className="pointer-events-none fixed inset-0 -z-10">
+        <div className="absolute right-[-8rem] top-[-8rem] h-80 w-80 rounded-full bg-blue-200/30 blur-3xl" />
+        <div className="absolute left-[-10rem] bottom-[-10rem] h-96 w-96 rounded-full bg-indigo-200/30 blur-3xl" />
+      </div>
+
       {/* Top bar */}
-      <div className="border-b bg-white/80 backdrop-blur">
+      <div className="sticky top-0 z-20 border-b bg-white/70 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <h1 className="text-2xl font-bold">הזמנת מוצרים</h1>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* לוגו קטן אופציונלי */}
+            <div className="h-8 w-8 rounded-xl bg-blue-600/90 grid place-items-center text-white text-sm font-bold">
+              במ
+            </div>
+            <h1 className="text-xl font-semibold tracking-tight">
+              הזמנת מוצרים
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-3">
             <Link
               href="/cart"
-              className="relative inline-flex items-center gap-2 px-3 py-1.5 rounded-md border bg-white hover:bg-gray-50"
+              className="relative inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-white hover:bg-gray-50"
             >
               <span>העגלה</span>
               {count > 0 && (
@@ -137,6 +157,7 @@ export default function OrderPage() {
                 </span>
               )}
             </Link>
+
             {session ? (
               <div className="flex items-center gap-2">
                 <span className="hidden sm:inline text-xs text-gray-600">
@@ -145,11 +166,9 @@ export default function OrderPage() {
                 <button
                   onClick={async () => {
                     await supabase.auth.signOut();
-                    setSession(null); // עדכן מצב מקומי מיד
-                    // אפשר להפנות לעמוד התחברות במקום refresh אם תרצה:
-                    // router.push("/auth");
+                    setSession(null);
                   }}
-                  className="px-3 py-1.5 rounded-full border text-red-600 hover:bg-red-50"
+                  className="px-3 py-1.5 rounded-xl border text-red-600 hover:bg-red-50"
                 >
                   התנתקות
                 </button>
@@ -157,7 +176,7 @@ export default function OrderPage() {
             ) : (
               <Link
                 href="/auth"
-                className="px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700"
+                className="px-3 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
               >
                 התחבר
               </Link>
@@ -166,12 +185,43 @@ export default function OrderPage() {
         </div>
       </div>
 
+      {/* Hero */}
+      <header className="relative">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="mt-6 rounded-3xl border bg-white/70 backdrop-blur p-6 md:p-10 shadow-sm overflow-hidden">
+            {/* טקסט הירו */}
+            <div className="text-center space-y-3">
+              <h2 className="text-2xl md:text-4xl font-extrabold tracking-tight leading-tight">
+                כל מה שבית מדרש צריך במקום אחד
+              </h2>
+              <p className="text-gray-600 max-w-2xl mx-auto">
+                הזמנה קלה, מוצרים איכותיים, ומחירים הוגנים — חוסכים זמן ומשלבים
+                הכול בממשק אחד נעים.
+              </p>
+            </div>
+
+            {/* פס קטגוריות מהיר */}
+            <div className="mt-6 md:mt-8">
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <CategoryPill id="all" label="הכל" />
+                {hasUncategorized && (
+                  <CategoryPill id="uncategorized" label="ללא קטגוריה" />
+                )}
+                {categories.map((c) => (
+                  <CategoryPill key={c.id} id={c.id} label={c.name} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
+      <main className="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
         {/* Sidebar */}
-        <aside className="lg:sticky lg:top-4 h-max">
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="text-sm text-gray-600 mb-3">קטגוריות</div>
+        <aside className="lg:sticky lg:top-24 h-max">
+          <div className="rounded-2xl border bg-white/80 backdrop-blur p-4 shadow-sm">
+            <div className="text-sm text-gray-600 mb-3">סינון לפי קטגוריה</div>
             <div className="flex flex-wrap gap-2">
               <CategoryPill id="all" label="הכל" />
               {hasUncategorized && (
@@ -191,7 +241,7 @@ export default function OrderPage() {
               {Array.from({ length: 8 }).map((_, i) => (
                 <div
                   key={i}
-                  className="rounded-2xl border bg-white overflow-hidden animate-pulse"
+                  className="rounded-2xl border bg-white/70 backdrop-blur overflow-hidden animate-pulse shadow-sm"
                 >
                   <div className="aspect-[4/3] bg-gray-100" />
                   <div className="p-4 space-y-3">
@@ -213,12 +263,11 @@ export default function OrderPage() {
                 return (
                   <article
                     key={product.id}
-                    className="group rounded-2xl border bg-white shadow-sm hover:shadow-md transition overflow-hidden flex flex-col"
+                    className="group rounded-2xl border bg-white/80 backdrop-blur shadow-sm hover:shadow-md hover:-translate-y-0.5 transition overflow-hidden flex flex-col"
                   >
-                    {/* Image area – יחס קבוע ותצוגה נקייה */}
+                    {/* Image */}
                     <div className="relative aspect-[4/3] bg-white border-b">
                       {product.image_url ? (
-                        // אם התמונות חיצוניות, צריך להוסיף דומיין ל-next.config.js -> images.domains
                         <Image
                           src={product.image_url}
                           alt={product.name}
@@ -258,7 +307,7 @@ export default function OrderPage() {
                           onChange={(e) =>
                             setQtyFor(product.id, parseInt(e.target.value))
                           }
-                          className="w-14 text-center border rounded-md py-1.5"
+                          className="w-16 text-center border rounded-lg py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
                         />
                         <button
                           aria-label="הוסף כמות"
@@ -282,7 +331,7 @@ export default function OrderPage() {
             </div>
           )}
         </section>
-      </div>
+      </main>
     </div>
   );
 }
