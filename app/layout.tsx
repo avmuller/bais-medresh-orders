@@ -1,5 +1,6 @@
 import "@/styles/globals.css";
-import AutoLogout from "@/components/AutoLogout"; // ← חשוב: קיים כ־client component
+import AutoLogout from "@/components/AutoLogout";
+import SupabaseProvider from "./_supabase-provider";
 
 export default function RootLayout({
   children,
@@ -9,9 +10,11 @@ export default function RootLayout({
   return (
     <html lang="he" dir="rtl">
       <body>
-        {/* יתנתק אוטומטית אחרי 30 דקות חוסר פעילות (אפשר לשנות) */}
-        <AutoLogout minutes={30} />
-        {children}
+        <SupabaseProvider>
+          {/* יתנתק אוטומטית אחרי 30 דקות חוסר פעילות (אפשר לשנות) */}
+          <AutoLogout minutes={30} />
+          {children}
+        </SupabaseProvider>
       </body>
     </html>
   );
