@@ -1,11 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, signOut } from "@/lib/auth";
 import { supabase } from "@/lib/supabaseClient";
 
+// מונע פרה-רנדרינג ומכריח SSR/דינמי
+export const dynamic = "force-dynamic";
+// אלטרנטיבה שקולה: export const revalidate = 0;
+
 export default function AdminLoginPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-center">טוען…</div>}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirectTo") || "/admin/orders";
@@ -20,15 +32,16 @@ export default function AdminLoginPage() {
     setError(null);
     setLoading(true);
     try {
-      // כניסה רגילה
+      // התחברות
       await signIn(email, password);
 
-      // בדיקת תפקיד לאחר התחברות
+      // אימות זהות מול שרת Supabase (מאובטח)
       const {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) throw new Error("לא נוצר סשן לאחר התחברות.");
 
+      // בדיקת הרשאת אדמין
       const { data: profile, error: profErr } = await supabase
         .from("profiles")
         .select("role")
