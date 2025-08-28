@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useHybridCart } from "@/hooks/useHybridCart";
 import type { Session } from "@supabase/supabase-js";
 import AccountButton from "@/components/AccountButton";
-import { useSearchParams } from "next/navigation";
 
 type Category = { id: string; name: string };
 type Product = {
@@ -19,29 +18,16 @@ type Product = {
   image_url?: string | null;
 };
 
-export default function OrderPage() {
+/* ---------- קומפוננטת-בן: באנרים + ניקוי ה-URL (עטוף ב-Suspense למטה) ---------- */
+function OrderBanners() {
   const router = useRouter();
   const sp = useSearchParams();
+
   const showVerified = sp.get("verified") === "1";
   const loginWelcome = sp.get("login") === "1";
 
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const [banner, setBanner] = useState<null | "verified" | "login">(null);
 
-  const [selectedCat, setSelectedCat] = useState<
-    "all" | "uncategorized" | string
-  >("all");
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
-  const [session, setSession] = useState<Session | null>(null);
-
-  const { addItem, count } = useHybridCart();
-
-  // מודאל התחברות
-  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
-
-  // קובע איזה באנר להראות מרגע העלייה
   useEffect(() => {
     if (showVerified) setBanner("verified");
     else if (loginWelcome) setBanner("login");
@@ -57,12 +43,43 @@ export default function OrderPage() {
     }
   }, [showVerified, loginWelcome, router]);
 
-  // אופציונלי: להעלים את הבאנר אוטומטית אחרי 5 שניות
   useEffect(() => {
     if (!banner) return;
     const t = setTimeout(() => setBanner(null), 5000);
     return () => clearTimeout(t);
   }, [banner]);
+
+  if (!banner) return null;
+
+  return (
+    <div className="bg-green-50 text-green-800 border-b border-green-200">
+      <div className="max-w-7xl mx-auto px-4 py-2 text-sm">
+        {banner === "verified"
+          ? "השינויים אושרו בהצלחה. האימייל המעודכן כבר בתוקף."
+          : "התחברת בהצלחה."}
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------- העמוד ----------------------------------- */
+export default function OrderPage() {
+  const router = useRouter();
+
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+
+  const [selectedCat, setSelectedCat] = useState<
+    "all" | "uncategorized" | string
+  >("all");
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState<Session | null>(null);
+
+  const { addItem, count } = useHybridCart();
+
+  // מודאל התחברות
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
 
   // טעינת קטגוריות ומוצרים
   useEffect(() => {
@@ -122,14 +139,14 @@ export default function OrderPage() {
       [id]: Math.max(1, Number.isFinite(next) ? next : 1),
     }));
 
-  // ❗ שינוי מרכזי: לא מוסיפים לעגלה אם אין session — פותחים מודאל התחברות
+  // לא מוסיפים לעגלה אם אין session — פותחים מודאל התחברות
   const addToCart = (product: Product) => {
     const qty = quantities[product.id] || 1;
     if (qty < 1) return;
 
     if (!session) {
       setShowLoginPrompt(true);
-      return; // לא מוסיפים לעגלה
+      return;
     }
 
     addItem({
@@ -209,21 +226,11 @@ export default function OrderPage() {
           </div>
         </div>
       </div>
-      {banner === "verified" && (
-        <div className="bg-green-50 text-green-800 border-b border-green-200">
-          <div className="max-w-7xl mx-auto px-4 py-2 text-sm">
-            השינויים אושרו בהצלחה. האימייל המעודכן כבר בתוקף.
-          </div>
-        </div>
-      )}
 
-      {banner === "login" && (
-        <div className="bg-green-50 text-green-800 border-b border-green-200">
-          <div className="max-w-7xl mx-auto px-4 py-2 text-sm">
-            התחברת בהצלחה.
-          </div>
-        </div>
-      )}
+      {/* באנרים: עטוף ב-Suspense כדי לרצות את Next/Vercel */}
+      <Suspense fallback={null}>
+        <OrderBanners />
+      </Suspense>
 
       {/* Hero */}
       <header className="relative">
@@ -255,6 +262,7 @@ export default function OrderPage() {
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
+        {/* Sidebar */}
         <aside className="lg:sticky lg:top-24 h-max">
           <div className="rounded-2xl border bg-white/80 backdrop-blur p-4 shadow-sm">
             <div className="text-sm text-gray-600 mb-3">סינון לפי קטגוריה</div>
@@ -270,6 +278,7 @@ export default function OrderPage() {
           </div>
         </aside>
 
+        {/* Products */}
         <section>
           {loading ? (
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5">
@@ -300,6 +309,7 @@ export default function OrderPage() {
                     key={product.id}
                     className="group rounded-2xl border bg-white/80 backdrop-blur shadow-sm hover:shadow-md hover:-translate-y-0.5 transition overflow-hidden flex flex-col"
                   >
+                    {/* Image */}
                     <div className="relative aspect-[4/3] bg-white border-b">
                       {product.image_url ? (
                         <Image
@@ -319,11 +329,13 @@ export default function OrderPage() {
                       </span>
                     </div>
 
+                    {/* Body */}
                     <div className="p-4 flex flex-col gap-3 grow">
                       <h3 className="font-semibold text-base leading-6 line-clamp-3 min-h-[4.5rem]">
                         {product.name}
                       </h3>
 
+                      {/* Quantity */}
                       <div className="mt-auto flex items-center justify-center gap-2">
                         <button
                           aria-label="הפחת כמות"
