@@ -1,53 +1,36 @@
-import { useEffect, useMemo } from "react";
+// hooks/useHybridCart.ts
+import { useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
-import {
-  usePersistentCart,
-  CartItem as GuestItem,
-} from "@/hooks/usePersistentCart";
 import { useDbCart } from "@/hooks/useDbCart";
 
-/** אורח => localStorage, משתמש => DB, עם מיזוג אוטומטי אחרי התחברות */
+/** עגלה דרך DB בלבד; אורח => עגלה ריקה ופונקציות No-Op */
 export function useHybridCart() {
-  const guest = usePersistentCart("cart");
   const db = useDbCart(true);
 
-  const mode: "guest" | "db" = db.hydrated && db.cartId ? "db" : "guest";
-
-  // מיזוג עגלת אורח ל-DB ברגע שיש משתמש מחובר
+  // 👇 זה החלק החשוב: עוקבים אחרי ה־session
+  const [session, setSession] = useState<Session | null>(null);
   useEffect(() => {
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user || !db.cartId) return;
-      if (guest.cart.length === 0) return;
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) setSession(data.session ?? null);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, s) => {
+      setSession(s ?? null);
+    });
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
-      const map: Record<string, number> = {};
-      db.items.forEach((i) => {
-        map[i.product_id] = i.quantity;
-      });
-      guest.cart.forEach((g: GuestItem) => {
-        map[g.id] = (map[g.id] || 0) + g.quantity;
-      });
+  const isGuest = !session?.user;
 
-      const updates = Object.entries(map).map(([product_id, quantity]) => ({
-        cart_id: db.cartId!,
-        product_id,
-        quantity,
-      }));
-      if (updates.length) {
-        await supabase
-          .from("cart_items")
-          .upsert(updates, { onConflict: "cart_id,product_id" });
-      }
-      guest.clearCart();
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db.cartId]);
-
-  // API אחיד לשני המצבים
   const api = useMemo(() => {
-    if (mode === "db") {
+    if (!isGuest && db.cartId) {
+      // מחובר: משתמש בנתוני ה־DB
       return {
         cart: db.items.map((i) => ({
           id: i.product_id,
@@ -76,49 +59,29 @@ export function useHybridCart() {
         count: db.count,
         total: db.total,
         hydrated: db.hydrated,
-        mode,
+        mode: "db" as const,
       };
     }
+
+    // אורח: ריק מידית — מונע הצגת מספר ישן אחרי SIGNED_OUT
     return {
-      cart: guest.cart.map((g) => ({
-        id: g.id,
-        name: g.name,
-        price: g.price,
-        quantity: g.quantity,
-        image_url: g.image_url ?? null,
-      })),
-      addItem: (p: {
+      cart: [] as Array<{
         id: string;
         name: string;
         price: number;
-        quantity?: number;
-        image_url?: string | null;
-      }) =>
-        guest.addItem({
-          id: p.id,
-          name: p.name,
-          price: p.price,
-          quantity: p.quantity ?? 1,
-          image_url: p.image_url ?? null,
-        }),
-      updateQty: (id: string, delta: number) => guest.updateQty(id, delta),
-      removeItem: (id: string) => guest.removeItem(id),
-      clearCart: () => guest.clearCart(),
-      count: guest.count,
-      total: guest.total,
+        quantity: number;
+        image_url: string | null;
+      }>,
+      addItem: (_p: any) => {},
+      updateQty: (_id: string, _delta: number) => {},
+      removeItem: (_id: string) => {},
+      clearCart: () => {},
+      count: 0,
+      total: 0,
       hydrated: true,
-      mode,
+      mode: "guest" as const,
     };
-  }, [
-    mode,
-    db.items,
-    db.count,
-    db.total,
-    db.hydrated,
-    guest.cart,
-    guest.count,
-    guest.total,
-  ]);
+  }, [isGuest, db.items, db.count, db.total, db.hydrated, db.cartId]);
 
   return api;
 }

@@ -1,5 +1,5 @@
 // hooks/useDbCart.ts
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 export type DbCartLine = {
@@ -21,10 +21,8 @@ type RawItem = {
   id: string;
   product_id: string;
   quantity: number;
-  // לפעמים Supabase מחזיר את הקשר בשם alias "product" (object או array)
-  product?: ProductRow | ProductRow[] | null;
-  // ולפעמים בשם הטבלה "products" (בד"כ array)
-  products?: ProductRow[] | null;
+  product?: ProductRow | ProductRow[] | null; // alias "product"
+  products?: ProductRow[] | null; // alias "products"
 };
 
 async function getOrCreateCartId(userId: string) {
@@ -42,71 +40,96 @@ export function useDbCart(enabled: boolean = true) {
   const [cartId, setCartId] = useState<string | null>(null);
   const [items, setItems] = useState<DbCartLine[]>([]);
   const [hydrated, setHydrated] = useState(false);
-  const initRef = useRef(false);
 
-  useEffect(() => {
-    if (!enabled || initRef.current) return;
-    initRef.current = true;
+  // טוען את העגלה למשתמש הנוכחי, או מאפס אם אין משתמש
+  const loadForCurrentUser = useCallback(async () => {
+    if (!enabled) return;
 
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        setHydrated(true);
-        return;
-      }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-      const cid = await getOrCreateCartId(user.id);
-      setCartId(cid);
-
-      // ⚠️ אם שם ה-FK אצלך שונה, עדכן במקום !cart_items_product_id_fkey
-      const { data, error } = await supabase
-        .from("cart_items")
-        .select(
-          `
-          id,
-          product_id,
-          quantity,
-          product:products!cart_items_product_id_fkey (
-            id, name, price, image_url
-          )
-        `
-        )
-        .eq("cart_id", cid);
-
-      if (error) {
-        console.error("load cart_items error:", error);
-        setHydrated(true);
-        return;
-      }
-
-      const rows = (data ?? []) as RawItem[];
-
-      const mapped: DbCartLine[] = rows
-        .map((r) => {
-          const candidate = (r.product ?? r.products) as
-            | ProductRow
-            | ProductRow[]
-            | null
-            | undefined;
-          const prod = Array.isArray(candidate) ? candidate[0] : candidate;
-          if (!prod) return null;
-
-          return {
-            product_id: r.product_id,
-            name: prod.name,
-            price: Number(prod.price),
-            quantity: r.quantity,
-            image_url: prod.image_url ?? null,
-          } as DbCartLine;
-        })
-        .filter(Boolean) as DbCartLine[];
-
-      setItems(mapped);
+    if (!user) {
+      setCartId(null);
+      setItems([]);
       setHydrated(true);
-    })();
+      return;
+    }
+
+    const cid = await getOrCreateCartId(user.id);
+    setCartId(cid);
+
+    // ⚠️ עדכן את שם ה-FK אם שונה אצלך
+    const { data, error } = await supabase
+      .from("cart_items")
+      .select(
+        `
+        id,
+        product_id,
+        quantity,
+        product:products!cart_items_product_id_fkey (
+          id, name, price, image_url
+        )
+      `
+      )
+      .eq("cart_id", cid);
+
+    if (error) {
+      console.error("load cart_items error:", error);
+      setHydrated(true);
+      return;
+    }
+
+    const rows = (data ?? []) as RawItem[];
+
+    const mapped: DbCartLine[] = rows
+      .map((r) => {
+        const candidate = (r.product ?? r.products) as
+          | ProductRow
+          | ProductRow[]
+          | null
+          | undefined;
+        const prod = Array.isArray(candidate) ? candidate[0] : candidate;
+        if (!prod) return null;
+
+        return {
+          product_id: r.product_id,
+          name: prod.name,
+          price: Number(prod.price),
+          quantity: r.quantity,
+          image_url: prod.image_url ?? null,
+        } as DbCartLine;
+      })
+      .filter(Boolean) as DbCartLine[];
+
+    setItems(mapped);
+    setHydrated(true);
   }, [enabled]);
+
+  // טעינה ראשונית
+  useEffect(() => {
+    if (!enabled) return;
+    loadForCurrentUser();
+  }, [enabled, loadForCurrentUser]);
+
+  // האזן לשינויים ב־Auth: ניקוי מיידי בהתנתקות, טעינה מחדש בהתחברות/רענון טוקן
+  useEffect(() => {
+    if (!enabled) return;
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_OUT" || !session) {
+        setCartId(null);
+        setItems([]);
+        setHydrated(true);
+        return;
+      }
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        await loadForCurrentUser();
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [enabled, loadForCurrentUser]);
 
   const count = useMemo(
     () => items.reduce((s, i) => s + i.quantity, 0),

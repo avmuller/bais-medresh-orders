@@ -6,12 +6,14 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useHybridCart } from "@/hooks/useHybridCart";
 
-// Add loading spinner component
+// 🛒 עגלה דרך DB בלבד (אורח רואה עגלה ריקה)
+
+// Spinner קטן
 const Spinner = () => (
   <div className="inline-block animate-spin h-4 w-4 border-2 border-gray-300 border-t-gray-600 rounded-full" />
 );
 
-// Add error message component
+// קומפוננטת שגיאה קצרה
 const ErrorMessage = ({ message }: { message: string }) => (
   <div className="bg-red-50 text-red-600 p-3 rounded-md mb-4">{message}</div>
 );
@@ -19,7 +21,6 @@ const ErrorMessage = ({ message }: { message: string }) => (
 export default function CartPage() {
   const router = useRouter();
 
-  // 🛒 עגלה מתמדת דרך ההוק
   const { cart, updateQty, removeItem, clearCart, total, hydrated } =
     useHybridCart();
 
@@ -45,6 +46,7 @@ export default function CartPage() {
 
   const handleCreateOrder = async () => {
     setError(null);
+
     if (cart.length === 0) {
       setError("העגלה ריקה!");
       return;
@@ -58,7 +60,8 @@ export default function CartPage() {
     } = await supabase.auth.getSession();
 
     if (!session) {
-      alert("יש להתחבר כדי לבצע הזמנה");
+      // בלי alert — הודעת שגיאה + ניווט למסך התחברות
+      setError("כדי לבצע הזמנה צריך להתחבר.");
       router.push("/auth");
       setSubmitting(false);
       return;
@@ -108,7 +111,7 @@ export default function CartPage() {
     }
   };
 
-  // הצג טעינה קלה עד שהעגלה נטענת מה־storage
+  // הצג טעינה עד שהעגלה נטענת (מה-DB בהוק)
   if (!hydrated) {
     return <div className="p-6 text-center">טוען עגלה...</div>;
   }
@@ -268,4 +271,3 @@ export default function CartPage() {
     </div>
   );
 }
-import { useRef } from "react";

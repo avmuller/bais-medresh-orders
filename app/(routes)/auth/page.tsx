@@ -18,41 +18,50 @@ export default function AuthPage() {
   const [institutionAddress, setInstitutionAddress] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     setLoading(true);
+    setError(null);
+    setInfo(null);
+
     try {
       if (isLogin) {
         await signIn(email.trim(), password);
-        alert("✅ התחברת בהצלחה!");
-        router.push("/order");
-      } else {
-        // ולידציה – כל השדות חובה
-        if (
-          !responsibleName.trim() ||
-          !responsiblePhone.trim() ||
-          !institutionName.trim() ||
-          !institutionAddress.trim()
-        ) {
-          throw new Error(
-            "נא למלא שם אחראי, טלפון אחראי, שם המוסד וכתובת המוסד (כולם חובה)"
-          );
-        }
-
-        await signUpCustomer({
-          email: email.trim(),
-          password,
-          responsible_name: responsibleName.trim(),
-          responsible_phone: responsiblePhone.trim(),
-          institution_name: institutionName.trim(),
-          institution_address: institutionAddress.trim(),
-        });
-
-        alert("✅ נרשמת בהצלחה! בדוק מייל לאימות החשבון.");
-        setIsLogin(true);
+        // בלי alert — ניווט שקט עם דגל להודעת ברוך הבא
+        router.push("/order?login=1");
+        return;
       }
+
+      // הרשמה — ולידציה
+      if (
+        !responsibleName.trim() ||
+        !responsiblePhone.trim() ||
+        !institutionName.trim() ||
+        !institutionAddress.trim()
+      ) {
+        throw new Error(
+          "נא למלא שם אחראי, טלפון אחראי, שם המוסד וכתובת המוסד (כולם חובה)."
+        );
+      }
+
+      await signUpCustomer({
+        email: email.trim(),
+        password,
+        responsible_name: responsibleName.trim(),
+        responsible_phone: responsiblePhone.trim(),
+        institution_name: institutionName.trim(),
+        institution_address: institutionAddress.trim(),
+      });
+
+      // בלי alert — הודעת מידע בתוך העמוד
+      setInfo(
+        "נרשמת בהצלחה! שלחנו מייל לאימות החשבון. לאחר אימות תוכלי/תוכל להתחבר."
+      );
+      setIsLogin(true);
     } catch (err: any) {
-      alert("שגיאה: " + (err?.message || "אירעה שגיאה"));
+      setError(err?.message || "אירעה שגיאה");
     } finally {
       setLoading(false);
     }
@@ -63,6 +72,18 @@ export default function AuthPage() {
       <h1 className="text-2xl font-bold text-center">
         {isLogin ? "התחברות" : "הרשמת מוסד"}
       </h1>
+
+      {/* הודעות */}
+      {error && (
+        <div className="bg-red-50 text-red-700 border border-red-200 p-3 rounded text-sm">
+          {error}
+        </div>
+      )}
+      {info && (
+        <div className="bg-blue-50 text-blue-700 border border-blue-200 p-3 rounded text-sm">
+          {info}
+        </div>
+      )}
 
       {!isLogin && (
         <>
@@ -118,7 +139,7 @@ export default function AuthPage() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         required
-        autoComplete="new-password"
+        autoComplete={isLogin ? "current-password" : "new-password"}
       />
 
       <button
@@ -131,7 +152,14 @@ export default function AuthPage() {
 
       <p className="text-center text-sm text-gray-500">
         {isLogin ? "אין לך חשבון?" : "כבר יש לך חשבון?"}{" "}
-        <button className="underline" onClick={() => setIsLogin(!isLogin)}>
+        <button
+          className="underline"
+          onClick={() => {
+            setIsLogin(!isLogin);
+            setError(null);
+            setInfo(null);
+          }}
+        >
           {isLogin ? "הרשם" : "התחבר"}
         </button>
       </p>

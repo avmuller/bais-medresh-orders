@@ -31,5 +31,13 @@ react-loadable-manifest.json
 # Trace files
 trace
 
-# VSCode settings (optional)
+# SQL dumps (נוצרים אצלך מסקריפט ה-dump)
+schema.sql
+roles.sql
+full_schema_with_roles.sql
+
+# IDE settings
 .vscode/
+.idea/
+
+scripts/dump-schema.ps1
