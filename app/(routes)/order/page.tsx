@@ -28,6 +28,15 @@ type Product = {
   created_at?: string | null;
 };
 
+/* ---------- עטיפה חדשה: דף חיצוני שרק עוטף ב-Suspense ---------- */
+export default function OrderPage() {
+  return (
+    <Suspense fallback={null}>
+      <OrderPageInner />
+    </Suspense>
+  );
+}
+
 /* ---------- באנרים + ניקוי ה-URL (עם התאמה קלה של צבעים) ---------- */
 function OrderBanners() {
   const router = useRouter();
@@ -154,8 +163,8 @@ function ProductCard({
   );
 }
 
-/* ----------------------------------- העמוד המעוצב ----------------------------------- */
-export default function OrderPage() {
+/* ----------------------------------- העמוד המעוצב (הפנימי) ----------------------------------- */
+function OrderPageInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const [categories, setCategories] = useState<Category[]>([]);
@@ -363,7 +372,7 @@ export default function OrderPage() {
             <div className="hidden md:flex flex-1 items-center gap-4 max-w-2xl mx-8">
               <div className="relative w-full">
                 <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 w-5 h-5" />
-                {/* --- MODIFIED: Connect input to state --- */}
+                {/* --- קישור ל-state --- */}
                 <input
                   type="text"
                   placeholder="חפש מוצרים..."
