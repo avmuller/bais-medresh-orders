@@ -9,23 +9,31 @@ import { useHybridCart } from "@/hooks/useHybridCart";
 import type { Session } from "@supabase/supabase-js";
 import AccountButton from "@/components/AccountButton";
 
-type Category = { id: string; name: string };
+// --- אייקונים לעיצוב החדש ---
+import { ShoppingCart, Search, ChevronDown } from "lucide-react";
+
+// --- הגדרות טיפוסים (ללא שינוי) ---
+type Category = {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  slug?: string | null;
+};
 type Product = {
   id: string;
   name: string;
   price: number;
   category_id: string | null;
   image_url?: string | null;
+  created_at?: string | null;
 };
 
-/* ---------- קומפוננטת-בן: באנרים + ניקוי ה-URL (עטוף ב-Suspense למטה) ---------- */
+/* ---------- באנרים + ניקוי ה-URL (עם התאמה קלה של צבעים) ---------- */
 function OrderBanners() {
   const router = useRouter();
   const sp = useSearchParams();
-
   const showVerified = sp.get("verified") === "1";
   const loginWelcome = sp.get("login") === "1";
-
   const [banner, setBanner] = useState<null | "verified" | "login">(null);
 
   useEffect(() => {
@@ -52,7 +60,7 @@ function OrderBanners() {
   if (!banner) return null;
 
   return (
-    <div className="bg-green-50 text-green-800 border-b border-green-200">
+    <div className="bg-emerald-50 text-emerald-800 border-b border-emerald-200">
       <div className="max-w-7xl mx-auto px-4 py-2 text-sm">
         {banner === "verified"
           ? "השינויים אושרו בהצלחה. האימייל המעודכן כבר בתוקף."
@@ -62,26 +70,112 @@ function OrderBanners() {
   );
 }
 
-/* ----------------------------------- העמוד ----------------------------------- */
+// --- עוזר קטן לניהול classNames (ללא שינוי) ---
+function classNames(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
+/* ----------------------------------- רכיב כרטיס מוצר מעוצב ----------------------------------- */
+function ProductCard({
+  product,
+  quantity,
+  onQuantityChange,
+  onAddToCart,
+}: {
+  product: Product;
+  quantity: number;
+  onQuantityChange: (newQuantity: number) => void;
+  onAddToCart: () => void;
+}) {
+  return (
+    <article className="group bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-stone-200/80 hover:shadow-lg hover:-translate-y-1 transition-all flex flex-col">
+      {/* תמונה ומחיר */}
+      <div className="relative aspect-[4/3] bg-white rounded-xl mb-4">
+        {product.image_url ? (
+          <Image
+            src={product.image_url}
+            alt={product.name}
+            fill
+            sizes="(max-width:768px) 50vw, (max-width:1280px) 25vw, 20vw"
+            className="object-contain p-2"
+          />
+        ) : (
+          <div className="absolute inset-0 grid place-items-center text-stone-400 text-sm">
+            ללא תמונה
+          </div>
+        )}
+      </div>
+
+      {/* שם המוצר */}
+      <h3 className="font-bold text-stone-800 text-base leading-6 line-clamp-2 min-h-[3rem] grow">
+        {product.name}
+      </h3>
+
+      {/* תגית מחיר */}
+      <div className="mt-2">
+        <span className="inline-block bg-amber-100 text-amber-800 text-sm font-semibold px-3 py-1 rounded-full">
+          {Number(product.price).toFixed(2)} ₪
+        </span>
+      </div>
+
+      {/* בקרת כמות */}
+      <div className="mt-4 flex items-center justify-center gap-2">
+        <button
+          aria-label="הפחת כמות"
+          onClick={() => onQuantityChange(quantity - 1)}
+          className="w-9 h-9 rounded-full border border-stone-300 hover:bg-stone-100 grid place-items-center transition-colors"
+        >
+          −
+        </button>
+        <input
+          type="number"
+          min={1}
+          value={quantity}
+          onChange={(e) => onQuantityChange(parseInt(e.target.value))}
+          className="w-16 h-9 text-center border-stone-300 border rounded-lg py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 transition"
+        />
+        <button
+          aria-label="הוסף כמות"
+          onClick={() => onQuantityChange(quantity + 1)}
+          className="w-9 h-9 rounded-full border border-stone-300 hover:bg-stone-100 grid place-items-center transition-colors"
+        >
+          +
+        </button>
+      </div>
+
+      {/* כפתור הוספה לעגלה */}
+      <button
+        onClick={onAddToCart}
+        className="mt-4 w-full h-11 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 active:scale-[0.98] transition-all whitespace-nowrap"
+      >
+        הוסף לעגלה
+      </button>
+    </article>
+  );
+}
+
+/* ----------------------------------- העמוד המעוצב ----------------------------------- */
 export default function OrderPage() {
   const router = useRouter();
-
+  const sp = useSearchParams();
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-
-  const [selectedCat, setSelectedCat] = useState<
-    "all" | "uncategorized" | string
-  >("all");
+  type Selection =
+    | { kind: "all" }
+    | { kind: "uncategorized" }
+    | { kind: "category"; id: string }
+    | { kind: "subcategory"; id: string };
+  const [selected, setSelected] = useState<Selection>({ kind: "all" });
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
-
   const { addItem, count } = useHybridCart();
-
-  // מודאל התחברות
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
 
-  // טעינת קטגוריות ומוצרים
+  // --- NEW: State for search query ---
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // טעינת נתונים (ללא שינוי)
   useEffect(() => {
     let cancelled = false;
     const fetchData = async () => {
@@ -89,26 +183,42 @@ export default function OrderPage() {
         setLoading(true);
         const { data: categoriesData } = await supabase
           .from("categories")
-          .select("id,name")
+          .select("id,name,parent_id,slug")
           .order("name");
         const { data: productsData } = await supabase
           .from("products")
           .select("id,name,price,category_id,image_url,created_at")
           .order("created_at", { ascending: false });
+
         if (cancelled) return;
-        setCategories(categoriesData || []);
+        setCategories((categoriesData as Category[]) || []);
         setProducts((productsData as Product[]) || []);
+
+        const cat = sp.get("cat");
+        const sub = sp.get("sub");
+        if (sub) {
+          const match = (categoriesData || []).find(
+            (c: any) => c.id === sub || (c.slug ? c.slug === sub : false)
+          );
+          if (match) setSelected({ kind: "subcategory", id: match.id });
+        } else if (cat) {
+          const match = (categoriesData || []).find(
+            (c: any) => c.id === cat || (c.slug ? c.slug === cat : false)
+          );
+          if (match) setSelected({ kind: "category", id: match.id });
+        }
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
     };
     fetchData();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // האזן לשינויים ב־Auth + הבא session בהעלאה
+  // ניהול Auth Session (ללא שינוי)
   useEffect(() => {
     let mounted = true;
     supabase.auth.getSession().then(({ data }) => {
@@ -126,29 +236,74 @@ export default function OrderPage() {
     };
   }, []);
 
-  const filteredProducts = useMemo(() => {
-    if (selectedCat === "all") return products;
-    if (selectedCat === "uncategorized")
-      return products.filter((p) => !p.category_id);
-    return products.filter((p) => p.category_id === selectedCat);
-  }, [products, selectedCat]);
+  // בניית היררכיית קטגוריות (ללא שינוי)
+  const { rootCategories, childrenByParent } = useMemo(() => {
+    const roots = categories.filter((c) => !c.parent_id);
+    const map = new Map<string, Category[]>();
+    for (const c of categories) {
+      if (c.parent_id) {
+        const arr = map.get(c.parent_id) ?? [];
+        arr.push(c);
+        map.set(c.parent_id, arr);
+      }
+    }
+    roots.sort((a, b) => a.name.localeCompare(b.name, "he"));
+    for (const arr of map.values())
+      arr.sort((a, b) => a.name.localeCompare(b.name, "he"));
+    return { rootCategories: roots, childrenByParent: map };
+  }, [categories]);
 
+  const hasUncategorized = products.some((p) => !p.category_id);
+
+  // --- MODIFIED: Filtering logic now includes search ---
+  const filteredProducts = useMemo(() => {
+    let categoryFilteredProducts: Product[];
+
+    // Step 1: Filter by category (existing logic)
+    if (selected.kind === "all") {
+      categoryFilteredProducts = products;
+    } else if (selected.kind === "uncategorized") {
+      categoryFilteredProducts = products.filter((p) => !p.category_id);
+    } else if (selected.kind === "subcategory") {
+      categoryFilteredProducts = products.filter(
+        (p) => p.category_id === selected.id
+      );
+    } else {
+      // kind === "category"
+      const childIds = (childrenByParent.get(selected.id) ?? []).map(
+        (c) => c.id
+      );
+      const ids = new Set<string>([selected.id, ...childIds]);
+      categoryFilteredProducts = products.filter(
+        (p) => p.category_id && ids.has(p.category_id)
+      );
+    }
+
+    // Step 2: Filter by search query on top of the category filter
+    if (!searchQuery.trim()) {
+      return categoryFilteredProducts;
+    }
+
+    const lowercasedQuery = searchQuery.trim().toLowerCase();
+    return categoryFilteredProducts.filter((product) =>
+      product.name.toLowerCase().includes(lowercasedQuery)
+    );
+  }, [products, selected, childrenByParent, searchQuery]); // <-- searchQuery added to dependency array
+
+  // לוגיקת כמות והוספה לעגלה (ללא שינוי)
   const setQtyFor = (id: string, next: number) =>
     setQuantities((prev) => ({
       ...prev,
       [id]: Math.max(1, Number.isFinite(next) ? next : 1),
     }));
 
-  // לא מוסיפים לעגלה אם אין session — פותחים מודאל התחברות
   const addToCart = (product: Product) => {
     const qty = quantities[product.id] || 1;
     if (qty < 1) return;
-
     if (!session) {
       setShowLoginPrompt(true);
       return;
     }
-
     addItem({
       id: product.id,
       name: product.name,
@@ -159,248 +314,269 @@ export default function OrderPage() {
     setQtyFor(product.id, 1);
   };
 
-  const hasUncategorized = products.some((p) => !p.category_id);
+  const handleCategorySelect = (selection: Selection) => {
+    setSelected(selection);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("cat");
+    url.searchParams.delete("sub");
 
-  const CategoryPill = ({ id, label }: { id: string; label: string }) => {
-    const active = selectedCat === id;
-    return (
-      <button
-        onClick={() => setSelectedCat(id)}
-        className={`px-3 py-1.5 rounded-full text-sm transition border shadow-xs ${
-          active
-            ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-            : "bg-white/80 text-gray-700 hover:bg-white hover:shadow-sm"
-        }`}
-      >
-        {label}
-      </button>
-    );
+    if (selection.kind === "category" || selection.kind === "subcategory") {
+      const catId =
+        selection.kind === "category"
+          ? selection.id
+          : categories.find((c) => c.id === selection.id)?.parent_id;
+      const subId = selection.kind === "subcategory" ? selection.id : null;
+
+      const cat = categories.find((c) => c.id === catId);
+      if (cat) url.searchParams.set("cat", cat.slug || cat.id);
+
+      if (subId) {
+        const sub = categories.find((c) => c.id === subId);
+        if (sub) url.searchParams.set("sub", sub.slug || sub.id);
+      }
+    }
+
+    router.replace(url.pathname + "?" + url.searchParams.toString());
   };
 
   return (
     <div
       dir="rtl"
-      className="min-h-screen bg-gradient-to-b from-indigo-50 via-white to-blue-50"
+      className="min-h-screen bg-gradient-to-b from-amber-50 to-stone-100"
     >
-      {/* Decorative background blobs */}
-      <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute right-[-8rem] top-[-8rem] h-80 w-80 rounded-full bg-blue-200/30 blur-3xl" />
-        <div className="absolute left-[-10rem] bottom-[-10rem] h-96 w-96 rounded-full bg-indigo-200/30 blur-3xl" />
-      </div>
-
-      {/* Top bar */}
-      <div className="sticky top-0 z-20 border-b bg-white/70 backdrop-blur">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-xl bg-blue-600/90 grid place-items-center text-white text-sm font-bold">
-              במ
-            </div>
-            <h1 className="text-xl font-semibold tracking-tight">
-              הזמנת מוצרים
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Link
-              href="/cart"
-              className="relative inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-white hover:bg-gray-50"
-            >
-              <span>העגלה</span>
-              {count > 0 && (
-                <span className="absolute -top-2 -right-2 text-xs rounded-full bg-blue-600 text-white w-5 h-5 grid place-items-center">
-                  {count}
-                </span>
-              )}
-            </Link>
-
-            {session ? (
-              <AccountButton />
-            ) : (
-              <Link
-                href="/auth"
-                className="px-3 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
-              >
-                התחבר
-              </Link>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* באנרים: עטוף ב-Suspense כדי לרצות את Next/Vercel */}
-      <Suspense fallback={null}>
-        <OrderBanners />
-      </Suspense>
-
-      {/* Hero */}
-      <header className="relative">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="mt-6 rounded-3xl border bg-white/70 backdrop-blur p-6 md:p-10 shadow-sm overflow-hidden">
-            <div className="text-center space-y-3">
-              <h2 className="text-2xl md:text-4xl font-extrabold tracking-tight leading-tight">
-                כל מה שבית מדרש צריך במקום אחד
-              </h2>
-              <p className="text-gray-600 max-w-2xl mx-auto">
-                הזמנה קלה, מוצרים איכותיים, ומחירים הוגנים — חוסכים זמן ומשלבים
-                הכול בממשק אחד נעים.
-              </p>
-            </div>
-            <div className="mt-6 md:mt-8">
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <CategoryPill id="all" label="הכל" />
-                {hasUncategorized && (
-                  <CategoryPill id="uncategorized" label="ללא קטגוריה" />
-                )}
-                {categories.map((c) => (
-                  <CategoryPill key={c.id} id={c.id} label={c.name} />
-                ))}
+      {/* ------------------ Header ------------------ */}
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-lg border-b border-stone-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-20">
+            {/* Logo */}
+            <div className="flex items-center">
+              <div className="bg-gradient-to-br from-yellow-400 to-amber-600 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg">
+                <span className="text-xl font-bold">ב״מ</span>
+              </div>
+              <div className="mr-4">
+                <h1 className="text-2xl font-bold text-stone-800">בית המדרש</h1>
+                <p className="text-sm text-stone-600">מערכת הזמנות</p>
               </div>
             </div>
+
+            {/* חיפוש */}
+            <div className="hidden md:flex flex-1 items-center gap-4 max-w-2xl mx-8">
+              <div className="relative w-full">
+                <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 w-5 h-5" />
+                {/* --- MODIFIED: Connect input to state --- */}
+                <input
+                  type="text"
+                  placeholder="חפש מוצרים..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full h-12 pr-12 pl-4 rounded-2xl border-2 border-stone-200 focus:border-amber-400 focus:outline-none transition-all bg-white/80"
+                />
+              </div>
+            </div>
+
+            {/* כפתורים */}
+            <div className="flex items-center gap-2 sm:gap-4">
+              <Link
+                href="/cart"
+                className="relative inline-flex items-center justify-center w-10 h-10 rounded-full border border-stone-300 bg-white hover:bg-stone-50 transition-colors"
+              >
+                <ShoppingCart className="w-5 h-5 text-stone-600" />
+                {count > 0 && (
+                  <span className="absolute -top-1 -right-1 text-xs rounded-full bg-amber-500 text-white w-5 h-5 grid place-items-center font-bold">
+                    {count}
+                  </span>
+                )}
+              </Link>
+
+              {session ? (
+                <div className="relative">
+                  <AccountButton />
+                </div>
+              ) : (
+                <Link
+                  href="/auth"
+                  className="px-4 py-2 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 transition-colors text-sm whitespace-nowrap"
+                >
+                  התחבר
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+        {/* סרגל קטגוריות */}
+        <div className="border-t border-stone-200 py-2">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-center flex-wrap gap-2">
+            <button
+              onClick={() => handleCategorySelect({ kind: "all" })}
+              className={classNames(
+                "px-3 py-1.5 rounded-full text-sm transition-colors",
+                selected.kind === "all"
+                  ? "bg-amber-500 text-white"
+                  : "bg-stone-100 hover:bg-stone-200 text-stone-700"
+              )}
+            >
+              הכל
+            </button>
+            {hasUncategorized && (
+              <button
+                onClick={() => handleCategorySelect({ kind: "uncategorized" })}
+                className={classNames(
+                  "px-3 py-1.5 rounded-full text-sm transition-colors",
+                  selected.kind === "uncategorized"
+                    ? "bg-amber-500 text-white"
+                    : "bg-stone-100 hover:bg-stone-200 text-stone-700"
+                )}
+              >
+                ללא קטגוריה
+              </button>
+            )}
+            {rootCategories.map((cat) => (
+              <div key={cat.id} className="relative group">
+                <button
+                  onClick={() =>
+                    handleCategorySelect({ kind: "category", id: cat.id })
+                  }
+                  className={classNames(
+                    "px-3 py-1.5 rounded-full text-sm transition-colors flex items-center gap-1",
+                    (selected.kind === "category" && selected.id === cat.id) ||
+                      (selected.kind === "subcategory" &&
+                        (childrenByParent.get(cat.id) || []).some(
+                          (c) => c.id === selected.id
+                        ))
+                      ? "bg-amber-500 text-white"
+                      : "bg-stone-100 hover:bg-stone-200 text-stone-700"
+                  )}
+                >
+                  {cat.name}
+                  {(childrenByParent.get(cat.id) ?? []).length > 0 && (
+                    <ChevronDown className="w-4 h-4" />
+                  )}
+                </button>
+                {(childrenByParent.get(cat.id) ?? []).length > 0 && (
+                  <div className="absolute top-full right-0 mt-2 min-w-[180px] z-40 bg-white rounded-xl shadow-lg border border-stone-200 p-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+                    {(childrenByParent.get(cat.id) ?? []).map((sub) => (
+                      <button
+                        key={sub.id}
+                        onClick={() =>
+                          handleCategorySelect({
+                            kind: "subcategory",
+                            id: sub.id,
+                          })
+                        }
+                        className={classNames(
+                          "w-full text-right block px-3 py-2 rounded-lg text-sm",
+                          selected.kind === "subcategory" &&
+                            selected.id === sub.id
+                            ? "bg-amber-100 text-amber-800"
+                            : "hover:bg-stone-50 text-stone-700"
+                        )}
+                      >
+                        {sub.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       </header>
 
-      {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
-        {/* Sidebar */}
-        <aside className="lg:sticky lg:top-24 h-max">
-          <div className="rounded-2xl border bg-white/80 backdrop-blur p-4 shadow-sm">
-            <div className="text-sm text-gray-600 mb-3">סינון לפי קטגוריה</div>
-            <div className="flex flex-wrap gap-2">
-              <CategoryPill id="all" label="הכל" />
-              {hasUncategorized && (
-                <CategoryPill id="uncategorized" label="ללא קטגוריה" />
-              )}
-              {categories.map((c) => (
-                <CategoryPill key={c.id} id={c.id} label={c.name} />
-              ))}
-            </div>
-          </div>
-        </aside>
+      {/* באנרים */}
+      <Suspense fallback={null}>
+        <OrderBanners />
+      </Suspense>
 
-        {/* Products */}
-        <section>
+      {/* Hero Section */}
+      <section className="relative py-16 px-4 sm:px-6 lg:px-8 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-l from-amber-100/50 to-yellow-50/50 -z-10" />
+        <div className="max-w-7xl mx-auto text-center">
+          <h1 className="text-4xl md:text-6xl font-bold text-stone-800 mb-4 leading-tight">
+            הזמנות לבית המדרש
+            <span className="block text-2xl md:text-3xl font-medium text-amber-600 mt-2">
+              כל מה שהמקום צריך, במקום אחד
+            </span>
+          </h1>
+          <p className="text-lg text-stone-600 max-w-3xl mx-auto leading-relaxed">
+            כאן תוכלו להזמין בקלות את כל המוצרים הנחוצים לתפעול השוטף של בית
+            המדרש - ממוצרים לקידוש ועד לציוד ניקיון.
+          </p>
+        </div>
+      </section>
+
+      {/* רשת המוצרים */}
+      <main className="py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-center justify-between mb-8">
+            <h2 className="text-3xl font-bold text-stone-800">
+              מוצרים זמינים להזמנה
+            </h2>
+          </div>
+
           {loading ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {Array.from({ length: 8 }).map((_, i) => (
                 <div
                   key={i}
-                  className="rounded-2xl border bg-white/70 backdrop-blur overflow-hidden animate-pulse shadow-sm"
+                  className="bg-white rounded-2xl p-5 space-y-4 animate-pulse"
                 >
-                  <div className="aspect-[4/3] bg-gray-100" />
-                  <div className="p-4 space-y-3">
-                    <div className="h-4 bg-gray-100 rounded w-2/3" />
-                    <div className="h-4 bg-gray-100 rounded w-1/3" />
-                    <div className="h-10 bg-gray-100 rounded" />
-                  </div>
+                  <div className="bg-stone-200 aspect-[4/3] w-full rounded-xl" />
+                  <div className="bg-stone-200 h-6 w-2/3 rounded" />
+                  <div className="bg-stone-200 h-4 w-1/3 rounded-full" />
+                  <div className="h-10 bg-stone-200 rounded-xl" />
                 </div>
               ))}
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="text-gray-600">
-              אין מוצרים להצגה בקטגוריה שנבחרה.
+            <div className="text-center py-16">
+              <div className="text-6xl mb-4">️🕵️</div>
+              <h3 className="text-2xl font-bold text-stone-800 mb-2">
+                לא נמצאו מוצרים תואמים
+              </h3>
+              <p className="text-stone-600">
+                נסו לשנות את החיפוש או לבחור קטגוריה אחרת.
+              </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5">
-              {filteredProducts.map((product) => {
-                const q = quantities[product.id] || 1;
-                return (
-                  <article
-                    key={product.id}
-                    className="group rounded-2xl border bg-white/80 backdrop-blur shadow-sm hover:shadow-md hover:-translate-y-0.5 transition overflow-hidden flex flex-col"
-                  >
-                    {/* Image */}
-                    <div className="relative aspect-[4/3] bg-white border-b">
-                      {product.image_url ? (
-                        <Image
-                          src={product.image_url}
-                          alt={product.name}
-                          fill
-                          sizes="(max-width:768px) 50vw, (max-width:1280px) 25vw, 20vw"
-                          className="object-contain p-3"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 grid place-items-center text-gray-400 text-sm">
-                          ללא תמונה
-                        </div>
-                      )}
-                      <span className="absolute left-3 top-3 rounded-full bg-blue-50 text-blue-700 text-sm px-2 py-0.5 shadow-sm">
-                        {Number(product.price).toFixed(2)} ₪
-                      </span>
-                    </div>
-
-                    {/* Body */}
-                    <div className="p-4 flex flex-col gap-3 grow">
-                      <h3 className="font-semibold text-base leading-6 line-clamp-3 min-h-[4.5rem]">
-                        {product.name}
-                      </h3>
-
-                      {/* Quantity */}
-                      <div className="mt-auto flex items-center justify-center gap-2">
-                        <button
-                          aria-label="הפחת כמות"
-                          onClick={() => setQtyFor(product.id, q - 1)}
-                          className="w-9 h-9 rounded-full border hover:bg-gray-50 grid place-items-center"
-                        >
-                          −
-                        </button>
-                        <input
-                          type="number"
-                          min={1}
-                          value={q}
-                          onChange={(e) =>
-                            setQtyFor(product.id, parseInt(e.target.value))
-                          }
-                          className="w-16 text-center border rounded-lg py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                        />
-                        <button
-                          aria-label="הוסף כמות"
-                          onClick={() => setQtyFor(product.id, q + 1)}
-                          className="w-9 h-9 rounded-full border hover:bg-gray-50 grid place-items-center"
-                        >
-                          +
-                        </button>
-                      </div>
-
-                      <button
-                        onClick={() => addToCart(product)}
-                        className="mt-3 w-full h-11 rounded-xl bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.99] transition whitespace-nowrap"
-                      >
-                        הוסף לעגלה
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
+              {filteredProducts.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  quantity={quantities[product.id] || 1}
+                  onQuantityChange={(newVal) => setQtyFor(product.id, newVal)}
+                  onAddToCart={() => addToCart(product)}
+                />
+              ))}
             </div>
           )}
-        </section>
+        </div>
       </main>
 
-      {/* מודאל התחברות כשמנסים להוסיף לעגלה כאורח */}
+      {/* מודאל התחברות */}
       {showLoginPrompt && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
           role="dialog"
           aria-modal="true"
         >
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border p-6">
-            <h3 className="text-lg font-bold mb-2">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border p-6 sm:p-8 text-center">
+            <h3 className="text-xl font-bold mb-2 text-stone-800">
               כדי להוסיף לעגלה צריך להתחבר
             </h3>
-            <p className="text-gray-600 mb-5">
+            <p className="text-stone-600 mb-6">
               נראה שאינך מחובר. התחבר/י כדי להוסיף מוצרים לעגלה ולהשלים הזמנה.
             </p>
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
               <button
                 onClick={() => setShowLoginPrompt(false)}
-                className="px-4 py-2 rounded-md border hover:bg-gray-50"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-stone-300 hover:bg-stone-50 font-semibold transition"
               >
                 סגור
               </button>
               <button
                 onClick={() => router.push("/auth")}
-                className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 transition"
               >
                 התחברות עכשיו
               </button>
@@ -408,6 +584,27 @@ export default function OrderPage() {
           </div>
         </div>
       )}
+
+      {/* Footer */}
+      <footer className="bg-gradient-to-l from-stone-800 to-stone-900 text-white py-16 mt-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center mb-4">
+            <div className="bg-gradient-to-br from-yellow-400 to-amber-600 text-white w-12 h-12 rounded-xl flex items-center justify-center">
+              <span className="text-xl font-bold">ב״מ</span>
+            </div>
+            <h3 className="text-2xl font-bold mr-3">בית המדרש</h3>
+          </div>
+          <p className="text-stone-300 leading-relaxed max-w-md">
+            מערכת ההזמנות המרכזית לניהול ותפעול צרכי בית המדרש.
+          </p>
+          <div className="border-t border-stone-700 mt-12 pt-8 text-center text-stone-400">
+            <p>
+              &copy; {new Date().getFullYear()} בית המדרש - מערכת הזמנות. כל
+              הזכויות שמורות.
+            </p>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -10,7 +10,7 @@ type Product = {
   id: string;
   name: string;
   price: number;
-  category_id: string;
+  category_id: string | null;
   supplier_id: string;
   image_url?: string | null;
 };
@@ -18,6 +18,8 @@ type Product = {
 type Category = {
   id: string;
   name: string;
+  parent_id: string | null;
+  slug?: string | null;
 };
 
 type Supplier = {
@@ -87,6 +89,34 @@ function Field({
   );
 }
 
+/* ===== Helpers for category tree / display ===== */
+function buildChildrenMap(categories: Category[]) {
+  const byParent = new Map<string, Category[]>();
+  for (const c of categories) {
+    const key = c.parent_id || "__ROOT__";
+    const arr = byParent.get(key) ?? [];
+    arr.push(c);
+    byParent.set(key, arr);
+  }
+  for (const [, arr] of byParent) {
+    arr.sort((a, b) => a.name.localeCompare(b.name, "he"));
+  }
+  return byParent;
+}
+
+function categoryPath(catId: string | null, cats: Category[]): string {
+  if (!catId) return "—";
+  const byId = new Map(cats.map((c) => [c.id, c]));
+  const names: string[] = [];
+  let cur = byId.get(catId) || null;
+  let guard = 0;
+  while (cur && guard++ < 10) {
+    names.unshift(cur.name);
+    cur = cur.parent_id ? byId.get(cur.parent_id) || null : null;
+  }
+  return names.join(" > ") || "—";
+}
+
 /* =========================
    Page
 ========================= */
@@ -98,7 +128,7 @@ export default function AdminProductsPage() {
   // product create form
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
-  const [categoryId, setCategoryId] = useState("");
+  const [categoryId, setCategoryId] = useState<string>("");
   const [supplierId, setSupplierId] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -110,6 +140,8 @@ export default function AdminProductsPage() {
 
   // category create form
   const [categoryName, setCategoryName] = useState("");
+  const [categoryParentId, setCategoryParentId] = useState<string>(""); // "" = ללא הורה
+  const [categorySlug, setCategorySlug] = useState("");
 
   // edit modals state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -133,22 +165,29 @@ export default function AdminProductsPage() {
 
   // edit category form
   const [editCatName, setEditCatName] = useState("");
+  const [editCatParentId, setEditCatParentId] = useState<string>("");
+  const [editCatSlug, setEditCatSlug] = useState<string>("");
 
   // Derived maps
   const categoryMap = useMemo(
-    () => Object.fromEntries(categories.map((c) => [c.id, c.name])),
+    () => Object.fromEntries(categories.map((c) => [c.id, c] as const)),
     [categories]
   );
   const supplierMap = useMemo(
-    () => Object.fromEntries(suppliers.map((s) => [s.id, s.name])),
+    () => Object.fromEntries(suppliers.map((s) => [s.id, s.name] as const)),
     [suppliers]
+  );
+  const childrenMap = useMemo(() => buildChildrenMap(categories), [categories]);
+  const rootCats = useMemo(
+    () => (childrenMap.get("__ROOT__") ?? []).slice(),
+    [childrenMap]
   );
 
   useEffect(() => {
     const fetchData = async () => {
       const { data: cats } = await supabase
         .from("categories")
-        .select("*")
+        .select("id,name,parent_id,slug")
         .order("name");
       const { data: sups } = await supabase
         .from("suppliers")
@@ -159,9 +198,9 @@ export default function AdminProductsPage() {
         .select("id,name,price,category_id,supplier_id,image_url,created_at")
         .order("created_at", { ascending: false });
 
-      setCategories(cats || []);
-      setSuppliers(sups || []);
-      setProducts(prods || []);
+      setCategories((cats as Category[]) || []);
+      setSuppliers((sups as Supplier[]) || []);
+      setProducts((prods as Product[]) || []);
     };
 
     fetchData();
@@ -172,15 +211,15 @@ export default function AdminProductsPage() {
       .from("products")
       .select("id,name,price,category_id,supplier_id,image_url,created_at")
       .order("created_at", { ascending: false });
-    setProducts(prods || []);
+    setProducts((prods as Product[]) || []);
   };
 
   const refreshCategories = async () => {
     const { data: cats } = await supabase
       .from("categories")
-      .select("*")
+      .select("id,name,parent_id,slug")
       .order("name");
-    setCategories(cats || []);
+    setCategories((cats as Category[]) || []);
   };
 
   const refreshSuppliers = async () => {
@@ -188,7 +227,7 @@ export default function AdminProductsPage() {
       .from("suppliers")
       .select("*")
       .order("name");
-    setSuppliers(sups || []);
+    setSuppliers((sups as Supplier[]) || []);
   };
 
   const resetProductForm = () => {
@@ -204,11 +243,11 @@ export default function AdminProductsPage() {
      Create Product
   ========================= */
   const handleAddProduct = async () => {
-    if (!name || !price || !categoryId || !supplierId) {
-      alert("נא למלא את כל השדות של המוצר");
+    if (!name || !price || !supplierId) {
+      alert("נא למלא את כל השדות של המוצר (שם, מחיר, ספק)");
       return;
     }
-
+    // category יכולה להיות ריקה (ללא קטגוריה)
     setLoading(true);
 
     let imageUrl: string | undefined;
@@ -241,7 +280,7 @@ export default function AdminProductsPage() {
     const { error } = await supabase.from("products").insert({
       name,
       price: parseFloat(price),
-      category_id: categoryId,
+      category_id: categoryId || null,
       supplier_id: supplierId,
       image_url: imageUrl ?? null,
     });
@@ -284,14 +323,19 @@ export default function AdminProductsPage() {
       alert("נא להזין שם קטגוריה");
       return;
     }
-    const { error } = await supabase
-      .from("categories")
-      .insert({ name: categoryName });
+    const payload: Partial<Category> = {
+      name: categoryName,
+      parent_id: categoryParentId || null,
+      slug: categorySlug || null,
+    };
+    const { error } = await supabase.from("categories").insert(payload);
     if (error) {
       alert("שגיאה בהוספת קטגוריה: " + error.message);
     } else {
       alert("✅ קטגוריה נוספה");
       setCategoryName("");
+      setCategoryParentId("");
+      setCategorySlug("");
       await refreshCategories();
     }
   };
@@ -336,7 +380,7 @@ export default function AdminProductsPage() {
       alert(
         "שגיאה במחיקת קטגוריה: " +
           (error.code === "23503"
-            ? "לא ניתן למחוק קטגוריה שמקושרת למוצרים."
+            ? "לא ניתן למחוק קטגוריה שמקושרת למוצרים או שיש לה תתי־קטגוריות."
             : error.message)
       );
     } else {
@@ -351,7 +395,7 @@ export default function AdminProductsPage() {
     setEditingProduct(prod);
     setEditProdName(prod.name);
     setEditProdPrice(prod.price.toString());
-    setEditProdCategoryId(prod.category_id);
+    setEditProdCategoryId(prod.category_id || "");
     setEditProdSupplierId(prod.supplier_id);
     setEditProdImageFile(null);
     setEditProdImagePreview(prod.image_url || null);
@@ -366,6 +410,8 @@ export default function AdminProductsPage() {
   const openEditCategory = (cat: Category) => {
     setEditingCategory(cat);
     setEditCatName(cat.name);
+    setEditCatParentId(cat.parent_id || "");
+    setEditCatSlug(cat.slug || "");
   };
 
   /* =========================
@@ -373,13 +419,8 @@ export default function AdminProductsPage() {
   ========================= */
   const handleUpdateProduct = async () => {
     if (!editingProduct) return;
-    if (
-      !editProdName ||
-      !editProdPrice ||
-      !editProdCategoryId ||
-      !editProdSupplierId
-    ) {
-      alert("נא למלא את כל השדות");
+    if (!editProdName || !editProdPrice || !editProdSupplierId) {
+      alert("נא למלא שם, מחיר וספק");
       return;
     }
 
@@ -417,7 +458,7 @@ export default function AdminProductsPage() {
       .update({
         name: editProdName,
         price: parseFloat(editProdPrice),
-        category_id: editProdCategoryId,
+        category_id: editProdCategoryId || null,
         supplier_id: editProdSupplierId,
         image_url: imageUrl ?? null,
       })
@@ -460,9 +501,18 @@ export default function AdminProductsPage() {
       alert("נא להזין שם קטגוריה");
       return;
     }
+    // לא לאפשר לשים הורה שהוא עצמו
+    if (editCatParentId && editCatParentId === editingCategory.id) {
+      alert("קטגוריה לא יכולה להיות הורה של עצמה");
+      return;
+    }
     const { error } = await supabase
       .from("categories")
-      .update({ name: editCatName })
+      .update({
+        name: editCatName,
+        parent_id: editCatParentId || null,
+        slug: editCatSlug || null,
+      })
       .eq("id", editingCategory.id);
 
     if (error) {
@@ -474,8 +524,80 @@ export default function AdminProductsPage() {
     }
   };
 
+  /* ======= UI ======= */
+  // רשימת קטגוריות היררכית לתצוגה
+  const CategoryTree = () => {
+    const renderNode = (cat: Category, depth = 0) => {
+      const padding = depth * 16; // px
+      const children = childrenMap.get(cat.id) ?? [];
+      return (
+        <div
+          key={cat.id}
+          className="border p-3 rounded flex justify-between items-center"
+        >
+          <div style={{ paddingInlineStart: padding }}>
+            <strong>{cat.name}</strong>{" "}
+            <span className="text-xs text-gray-500">
+              {cat.slug ? `• slug: ${cat.slug}` : ""}
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => openEditCategory(cat)}
+              className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600"
+            >
+              עדכן
+            </button>
+            <button
+              onClick={() => handleDeleteCategory(cat.id)}
+              className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              מחק
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    const out: React.ReactNode[] = [];
+    for (const root of rootCats) {
+      out.push(renderNode(root, 0));
+      const queue = [...(childrenMap.get(root.id) ?? [])].map((c) => ({
+        node: c,
+        depth: 1,
+      }));
+      while (queue.length) {
+        const { node, depth } = queue.shift()!;
+        out.push(renderNode(node, depth));
+        for (const ch of childrenMap.get(node.id) ?? []) {
+          queue.push({ node: ch, depth: depth + 1 });
+        }
+      }
+    }
+    return <div className="space-y-2 mt-2">{out}</div>;
+  };
+
+  // אפשרויות קטגוריה לבחירה בטופסי מוצר — עם הזחה
+  const CategorySelectOptions = () => {
+    const options: React.ReactNode[] = [];
+    const pushWithDepth = (cat: Category, depth: number) => {
+      const prefix = " ".repeat(depth * 2) + (depth ? "▸ " : "");
+      options.push(
+        <option key={cat.id} value={cat.id}>
+          {prefix}
+          {cat.name}
+        </option>
+      );
+      for (const ch of childrenMap.get(cat.id) ?? []) {
+        pushWithDepth(ch, depth + 1);
+      }
+    };
+    for (const root of rootCats) pushWithDepth(root, 0);
+    return <>{options}</>;
+  };
+
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-10">
+    <div className="p-6 max-w-5xl mx-auto space-y-10" dir="rtl">
       <h1 className="text-2xl font-bold text-center">
         ניהול מוצרים, ספקים וקטגוריות
       </h1>
@@ -502,18 +624,14 @@ export default function AdminProductsPage() {
             />
           </Field>
 
-          <Field label="קטגוריה" required>
+          <Field label="קטגוריה (אפשרי ללא)">
             <select
               className="border p-2 rounded w-full"
               value={categoryId}
               onChange={(e) => setCategoryId(e.target.value)}
             >
-              <option value="">בחר קטגוריה</option>
-              {categories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  {cat.name}
-                </option>
-              ))}
+              <option value="">ללא קטגוריה</option>
+              <CategorySelectOptions />
             </select>
           </Field>
 
@@ -600,7 +718,7 @@ export default function AdminProductsPage() {
                   <div className="font-semibold truncate">{prod.name}</div>
                   <div className="text-sm text-gray-600">
                     {prod.price} ₪ • קטגוריה:{" "}
-                    {categoryMap[prod.category_id] || "—"} • ספק:{" "}
+                    {categoryPath(prod.category_id, categories)} • ספק:{" "}
                     {supplierMap[prod.supplier_id] || "—"}
                   </div>
                 </div>
@@ -701,6 +819,30 @@ export default function AdminProductsPage() {
               onChange={(e) => setCategoryName(e.target.value)}
             />
           </Field>
+          <Field label="קטגורית־אם (אופציונלי)">
+            <select
+              className="border p-2 rounded w-full"
+              value={categoryParentId}
+              onChange={(e) => setCategoryParentId(e.target.value)}
+            >
+              <option value="">— ללא —</option>
+              {rootCats.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+              {/* אם תרצה לאפשר לבחור גם תתי־קטגוריות כהורה (להעמקה), אפשר למפות את כולן כאן */}
+            </select>
+          </Field>
+          <Field label="Slug (אופציונלי)">
+            <input
+              type="text"
+              className="border p-2 rounded"
+              value={categorySlug}
+              onChange={(e) => setCategorySlug(e.target.value)}
+              placeholder="latin-letters-and-dashes"
+            />
+          </Field>
         </div>
         <button
           onClick={handleAddCategory}
@@ -713,30 +855,7 @@ export default function AdminProductsPage() {
         {categories.length === 0 ? (
           <p className="text-gray-500">אין קטגוריות עדיין.</p>
         ) : (
-          <ul className="space-y-2 mt-2">
-            {categories.map((cat) => (
-              <li
-                key={cat.id}
-                className="border p-3 rounded flex justify-between items-center"
-              >
-                <strong>{cat.name}</strong>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => openEditCategory(cat)}
-                    className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600"
-                  >
-                    עדכן
-                  </button>
-                  <button
-                    onClick={() => handleDeleteCategory(cat.id)}
-                    className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
-                  >
-                    מחק
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <CategoryTree />
         )}
       </section>
 
@@ -784,18 +903,14 @@ export default function AdminProductsPage() {
           />
         </Field>
 
-        <Field label="קטגוריה" required>
+        <Field label="קטגוריה (אפשרי ללא)">
           <select
             className="border p-2 rounded w-full"
             value={editProdCategoryId}
             onChange={(e) => setEditProdCategoryId(e.target.value)}
           >
-            <option value="">בחר קטגוריה</option>
-            {categories.map((cat) => (
-              <option key={cat.id} value={cat.id}>
-                {cat.name}
-              </option>
-            ))}
+            <option value="">ללא קטגוריה</option>
+            <CategorySelectOptions />
           </select>
         </Field>
 
@@ -912,6 +1027,31 @@ export default function AdminProductsPage() {
             className="border p-2 rounded w-full"
             value={editCatName}
             onChange={(e) => setEditCatName(e.target.value)}
+          />
+        </Field>
+        <Field label="קטגורית־אם (אופציונלי)">
+          <select
+            className="border p-2 rounded w-full"
+            value={editCatParentId}
+            onChange={(e) => setEditCatParentId(e.target.value)}
+          >
+            <option value="">— ללא —</option>
+            {rootCats
+              .filter((c) => c.id !== editingCategory?.id)
+              .map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+          </select>
+        </Field>
+        <Field label="Slug (אופציונלי)">
+          <input
+            type="text"
+            className="border p-2 rounded w-full"
+            value={editCatSlug}
+            onChange={(e) => setEditCatSlug(e.target.value)}
+            placeholder="latin-letters-and-dashes"
           />
         </Field>
       </Modal>

@@ -1,16 +1,12 @@
 // app/api/orders/checkout/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { cookies } from "next/headers";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { getResend, FROM } from "@/lib/resend";
 
-// מומלץ: הבטחת ריצה על Node ושהנתיב לא יעבור סטטיזציה
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// ---- Types ----
-type CartItem = { id: string; quantity: number };
-
-// ---- Helpers ----
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
@@ -20,7 +16,7 @@ function escapeHtml(s: string) {
     (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[
         c
-      ]!)
+      ] as string)
   );
 }
 
@@ -65,126 +61,113 @@ function renderSupplierEmail(params: {
   </body></html>`;
 }
 
-// ---- Route ----
-export async function POST(req: NextRequest) {
+export async function POST(_req: NextRequest) {
   try {
-    // 0) Auth header מהלקוח
-    const authHeader = req.headers.get("authorization") || ""; // "Bearer <token>"
+    // Supabase מחובר לסשן דרך קוקיות (RLS יעבוד אוטומטית)
+    // ...
+    const supabase = createRouteHandlerClient({ cookies });
 
-    // Supabase client שמקבל את ה־Authorization קדימה ל-RLS
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false },
-    });
-
-    // 1) משתמש
+    // 1) אימות משתמש
     const {
       data: { user },
+      error: userErr,
     } = await supabase.auth.getUser();
-    if (!user) {
+    if (userErr || !user) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    // 2) גוף הבקשה
-    const body = await req.json().catch(() => null);
-    const cart: CartItem[] = Array.isArray(body?.cart) ? body.cart : [];
-    if (!cart.length) {
-      return NextResponse.json({ error: "empty cart" }, { status: 400 });
-    }
+    // 2) Checkout אטומי
+    type CheckoutOut = { order_id: string; total: number };
 
-    // 3) אימות מוצרים ומיפוי ספקים
-    const ids = cart.map((c) => c.id);
-    const { data: products, error: prodErr } = await supabase
-      .from("products")
-      .select("id,name,price,supplier_id")
-      .in("id", ids);
-
-    if (prodErr || !products?.length) {
+    const rpc = await supabase.rpc("checkout_cart"); // <-- בלי <> ובלי {}
+    if (rpc.error || !rpc.data) {
       return NextResponse.json(
-        { error: prodErr?.message || "products not found" },
+        { error: rpc.error?.message || "checkout failed" },
         { status: 400 }
       );
     }
 
-    // 4) יצירת הזמנה
-    const { data: order, error: orderErr } = await supabase
-      .from("orders")
-      .insert({ user_id: user.id })
-      .select()
-      .single();
+    const out = rpc.data as unknown as CheckoutOut; // טיפוס תוצאה אחיד
+    const orderId: string = out.order_id;
+    const total: number = Number(out.total) || 0;
 
-    if (orderErr || !order) {
-      return NextResponse.json(
-        { error: orderErr?.message || "order create failed" },
-        { status: 500 }
-      );
-    }
-
-    // 5) פריטי הזמנה
-    const items = cart.map((c) => ({
-      order_id: order.id,
-      product_id: c.id,
-      quantity: Math.max(1, Number(c.quantity) || 1),
-    }));
-    const { error: itemsErr } = await supabase
+    // 3) שליפת פריטי ההזמנה לצורך מיילים
+    const { data: lines, error: linesErr } = await supabase
       .from("order_items")
-      .insert(items);
-    if (itemsErr) {
-      return NextResponse.json({ error: itemsErr.message }, { status: 500 });
+      .select(
+        `
+        order_id,
+        quantity,
+        unit_price,
+        price,
+        product:products(id,name,supplier_id,price)
+      `
+      )
+      .eq("order_id", orderId);
+
+    if (linesErr) {
+      // לא מפילים את הבקשה בגלל מיילים — רק מתעדים
+      console.warn("[checkout] fetch order lines failed:", linesErr.message);
     }
 
-    // 6) קיבוץ לפי ספק ושליחת מיילים
-    const bySupplier = new Map<
-      string,
-      {
-        name: string;
-        email: string | null;
-        lines: { name: string; qty: number; price: number }[];
-      }
-    >();
+    // 4) מיילים לפי ספק (אם מוגדר RESEND_API_KEY)
+    const resend = await getResend();
 
-    for (const c of cart) {
-      const p = products.find((x) => x.id === c.id);
-      if (!p?.supplier_id) continue;
-      if (!bySupplier.has(p.supplier_id))
-        bySupplier.set(p.supplier_id, { name: "", email: null, lines: [] });
-      bySupplier.get(p.supplier_id)!.lines.push({
-        name: p.name,
-        qty: Number(c.quantity),
-        price: Number(p.price),
-      });
-    }
-
-    if (bySupplier.size) {
-      const supplierIds = Array.from(bySupplier.keys());
-      const { data: suppliers } = await supabase
-        .from("suppliers")
-        .select("id,name,email")
-        .in("id", supplierIds);
-
-      suppliers?.forEach((s) => {
-        const bucket = bySupplier.get(s.id);
-        if (bucket) {
-          bucket.name = s.name;
-          bucket.email = s.email;
+    if (resend && lines?.length) {
+      const bySupplier = new Map<
+        string,
+        {
+          name: string;
+          email: string | null;
+          lines: { name: string; qty: number; price: number }[];
         }
-      });
+      >();
 
-      // הכנת לקוח Resend באופן בטוח
-      const resend = await getResend();
+      for (const row of lines) {
+        const supplierId = (row as any)?.product?.supplier_id as string | null;
+        if (!supplierId) continue;
+        const unit = Number(
+          (row as any)?.unit_price ??
+            (row as any)?.price ??
+            (row as any)?.product?.price ??
+            0
+        );
+        if (!bySupplier.has(supplierId)) {
+          bySupplier.set(supplierId, { name: "", email: null, lines: [] });
+        }
+        bySupplier.get(supplierId)!.lines.push({
+          name: (row as any)?.product?.name ?? "Product",
+          qty: Number((row as any)?.quantity) || 1,
+          price: unit,
+        });
+      }
 
-      if (resend) {
+      if (bySupplier.size) {
+        const supplierIds = Array.from(bySupplier.keys());
+        const { data: suppliers } = await supabase
+          .from("suppliers")
+          .select("id,name,email")
+          .in("id", supplierIds);
+
+        suppliers?.forEach((s) => {
+          const b = bySupplier.get(s.id);
+          if (b) {
+            b.name = s.name;
+            b.email = s.email;
+          }
+        });
+
         const sends = Array.from(bySupplier.values()).map(async (s) => {
-          if (!s.email) return;
+          if (!s.email || s.lines.length === 0) return;
           const html = renderSupplierEmail({
             supplierName: s.name || "Supplier",
-            orderId: order.id,
+            orderId,
             lines: s.lines,
           });
           await resend.emails.send({
             from: FROM,
             to: s.email,
-            subject: `New order ${order.id.slice(0, 8)} – ${s.lines.reduce(
+            subject: `New order ${orderId.slice(0, 8)} – ${s.lines.reduce(
               (n, l) => n + l.qty,
               0
             )} items`,
@@ -193,15 +176,15 @@ export async function POST(req: NextRequest) {
         });
 
         await Promise.allSettled(sends);
-      } else {
-        console.warn(
-          "[resend] Missing API key; skipping supplier emails for order",
-          order.id
-        );
       }
+    } else if (!resend) {
+      console.warn(
+        "[resend] Missing API key; skipping supplier emails for order",
+        orderId
+      );
     }
 
-    return NextResponse.json({ ok: true, orderId: order.id });
+    return NextResponse.json({ ok: true, orderId, total }, { status: 201 });
   } catch (e: any) {
     console.error("checkout error:", e);
     return NextResponse.json(
