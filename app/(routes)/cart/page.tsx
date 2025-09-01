@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useHybridCart } from "@/hooks/useHybridCart";
+import { Trash2 } from "lucide-react";
 
 // 🛒 עגלה דרך DB בלבד (אורח רואה עגלה ריקה)
 
@@ -15,7 +16,9 @@ const Spinner = () => (
 
 // קומפוננטת שגיאה קצרה
 const ErrorMessage = ({ message }: { message: string }) => (
-  <div className="bg-red-50 text-red-600 p-3 rounded-md mb-4">{message}</div>
+  <div className="bg-red-50 text-red-600 p-3 rounded-xl mb-4 border border-red-200">
+    {message}
+  </div>
 );
 
 export default function CartPage() {
@@ -60,7 +63,7 @@ export default function CartPage() {
     } = await supabase.auth.getSession();
 
     if (!session) {
-      // בלי alert — הודעת שגיאה + ניווט למסך התחברות
+      // בלי alert — הודעת שגיאה + ניווט למסך תחברות
       setError("כדי לבצע הזמנה צריך להתחבר.");
       router.push("/auth");
       setSubmitting(false);
@@ -72,7 +75,7 @@ export default function CartPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${session.access_token}`, // ✅
         },
         body: JSON.stringify({
           cart: cart.map((i) => ({ id: i.id, quantity: i.quantity })),
@@ -113,161 +116,285 @@ export default function CartPage() {
 
   // הצג טעינה עד שהעגלה נטענת (מה-DB בהוק)
   if (!hydrated) {
-    return <div className="p-6 text-center">טוען עגלה...</div>;
+    return (
+      <div
+        dir="rtl"
+        className="min-h-screen grid place-items-center bg-gradient-to-b from-amber-50 to-stone-100"
+      >
+        <div className="text-stone-700 text-lg">טוען עגלה...</div>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen">
-      {/* Top bar */}
-      <div className="border-b">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-          <h1 className="text-2xl font-bold">העגלה שלי</h1>
-          <div className="flex items-center gap-4">
-            <Link
-              href="/order"
-              className="px-3 py-1.5 rounded-md border hover:bg-gray-50"
-            >
-              ← המשך קניה
+    <div
+      dir="rtl"
+      className="flex flex-col min-h-screen bg-gradient-to-b from-amber-50 to-stone-100"
+    >
+      {/* Header תואם להזמנות */}
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-lg border-b border-stone-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-20">
+            {/* Logo */}
+            <Link href="/order" className="flex items-center group">
+              <div className="bg-gradient-to-br from-yellow-400 to-amber-600 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg">
+                <span className="text-xl font-bold">ב״מ</span>
+              </div>
+              <div className="mr-4">
+                <p className="text-2xl font-bold text-stone-800 leading-5">
+                  בית המדרש
+                </p>
+                <p className="text-sm text-stone-600">העגלה שלי</p>
+              </div>
             </Link>
 
-            {userEmail ? (
-              <button
-                onClick={async () => {
-                  await supabase.auth.signOut();
-                  router.refresh();
-                }}
-                className="text-sm text-red-600 underline"
+            {/* פעולות חשבון/ניווט */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              <Link
+                href="/order"
+                className="px-4 h-10 grid place-items-center rounded-full border-2 border-stone-200 bg-white hover:border-amber-500 hover:bg-amber-50 font-semibold text-stone-700 transition-colors"
               >
-                התנתקות ({userEmail})
-              </button>
-            ) : (
-              <Link href="/auth" className="text-sm text-blue-600 underline">
-                התחבר להזמנה
+                ← חזרה למוצרים
               </Link>
-            )}
+
+              {userEmail ? (
+                <button
+                  onClick={async () => {
+                    await supabase.auth.signOut();
+                    router.refresh();
+                  }}
+                  className="px-4 h-10 rounded-full bg-stone-900 text-white hover:bg-stone-700 transition-colors text-sm"
+                >
+                  התנתקות{" "}
+                  <span className="opacity-70 hidden sm:inline">
+                    ({userEmail})
+                  </span>
+                </button>
+              ) : (
+                <Link
+                  href="/auth"
+                  className="px-4 h-10 grid place-items-center rounded-full bg-amber-500 text-white font-semibold hover:bg-amber-600 transition-colors text-sm"
+                >
+                  התחבר להזמנה
+                </Link>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Content */}
-      <div className="max-w-5xl mx-auto px-4 py-6">
-        {error && <ErrorMessage message={error} />}
+      {/* תוכן העגלה */}
+      <main className="flex-grow py-8 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          {error && <ErrorMessage message={error} />}
 
-        {cart.length === 0 ? (
-          <div className="text-center text-gray-600">
-            העגלה ריקה.{" "}
-            <Link href="/order" className="text-blue-600 underline">
-              חזרה למוצרים
-            </Link>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Responsive table wrapper */}
-            <div className="overflow-x-auto">
-              <div className="overflow-hidden rounded-xl border min-w-[640px]">
-                <table className="w-full text-right">
-                  <thead className="bg-gray-50">
-                    <tr className="text-sm text-gray-600">
-                      <th className="p-3">מוצר</th>
-                      <th className="p-3">מחיר יחידה</th>
-                      <th className="p-3">כמות</th>
-                      <th className="p-3">סה"כ</th>
-                      <th className="p-3">פעולות</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cart.map((item) => (
-                      <tr key={item.id} className="border-t">
-                        <td className="p-3">
-                          <div className="flex items-center gap-3">
-                            {item.image_url ? (
-                              <img
-                                src={item.image_url}
-                                alt={item.name}
-                                className="w-14 h-14 rounded object-cover border"
-                              />
-                            ) : (
-                              <div className="w-14 h-14 rounded border grid place-items-center text-xs text-gray-400">
-                                ללא תמונה
-                              </div>
-                            )}
-                            <div className="font-medium">{item.name}</div>
-                          </div>
-                        </td>
-                        <td className="p-3 whitespace-nowrap">
-                          {Number(item.price).toFixed(2)} ₪
-                        </td>
-                        <td className="p-3">
-                          <div className="inline-flex items-center gap-2">
-                            <button
-                              onClick={() => updateQty(item.id, -1)}
-                              className="w-8 h-8 rounded-md border hover:bg-gray-50"
-                            >
-                              −
-                            </button>
-                            <div className="w-10 text-center">
-                              {item.quantity}
-                            </div>
-                            <button
-                              onClick={() => updateQty(item.id, 1)}
-                              className="w-8 h-8 rounded-md border hover:bg-gray-50"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </td>
-                        <td className="p-3 whitespace-nowrap">
-                          {(Number(item.price) * item.quantity).toFixed(2)} ₪
-                        </td>
-                        <td className="p-3">
-                          <button
-                            onClick={() => removeItem(item.id)}
-                            className="px-3 py-1.5 text-sm rounded-md bg-red-600 text-white hover:bg-red-700"
+          {cart.length === 0 ? (
+            <div className="bg-white border border-stone-200 rounded-2xl p-10 text-center shadow-sm">
+              <div className="text-6xl mb-4">🛍️</div>
+              <h2 className="text-2xl font-bold text-stone-800 mb-2">
+                העגלה ריקה
+              </h2>
+              <p className="text-stone-600 mb-6">
+                התחילו להוסיף מוצרים להזמנה.
+              </p>
+              <Link
+                href="/order"
+                className="inline-flex items-center justify-center px-5 h-11 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 transition-colors"
+              >
+                חזרה למוצרים
+              </Link>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* רשימת מוצרים */}
+              <section className="lg:col-span-2">
+                <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+                  {/* כותרת הטבלה */}
+                  <div className="px-6 py-4 border-b border-stone-200 bg-stone-50/60">
+                    <h2 className="text-xl font-bold text-stone-800">
+                      פרטי עגלה
+                    </h2>
+                  </div>
+
+                  {/* טבלה רספונסיבית */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-right">
+                      <caption className="sr-only">פרטי המוצרים בעגלה</caption>
+                      <thead className="bg-stone-50 text-stone-600">
+                        <tr className="text-sm">
+                          <th className="p-4 font-medium">מוצר</th>
+                          <th className="p-4 font-medium whitespace-nowrap">
+                            מחיר יחידה
+                          </th>
+                          <th className="p-4 font-medium">כמות</th>
+                          <th className="p-4 font-medium whitespace-nowrap">
+                            סה"כ
+                          </th>
+                          <th className="p-4 font-medium">פעולות</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-stone-200">
+                        {cart.map((item) => (
+                          <tr
+                            key={item.id}
+                            className="hover:bg-stone-50/60 transition-colors"
                           >
-                            הסר
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-gray-50 font-semibold">
-                      <td className="p-3" colSpan={3}>
-                        סה"כ לתשלום
-                      </td>
-                      <td className="p-3">{total.toFixed(2)} ₪</td>
-                      <td className="p-3"></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
+                            <td className="p-4 align-middle">
+                              <div className="flex items-center gap-3">
+                                {item.image_url ? (
+                                  <img
+                                    src={item.image_url}
+                                    alt={item.name}
+                                    className="w-16 h-16 rounded-xl object-cover border border-stone-200"
+                                  />
+                                ) : (
+                                  <div className="w-16 h-16 rounded-xl border border-stone-200 grid place-items-center text-xs text-stone-400">
+                                    ללא תמונה
+                                  </div>
+                                )}
+                                <div className="font-semibold text-stone-800 leading-5 line-clamp-2 max-w-xs md:max-w-none">
+                                  {item.name}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-4 align-middle whitespace-nowrap text-stone-700">
+                              {Number(item.price).toFixed(2)} ₪
+                            </td>
+                            <td className="p-4 align-middle">
+                              <div className="inline-flex items-center gap-2">
+                                <button
+                                  onClick={() => updateQty(item.id, -1)}
+                                  className="w-8 h-8 rounded-full border border-stone-300 hover:bg-stone-100 grid place-items-center transition-colors"
+                                  aria-label="הפחת כמות"
+                                >
+                                  −
+                                </button>
+                                <div className="w-10 text-center font-semibold text-stone-800">
+                                  {item.quantity}
+                                </div>
+                                <button
+                                  onClick={() => updateQty(item.id, 1)}
+                                  className="w-8 h-8 rounded-full border border-stone-300 hover:bg-stone-100 grid place-items-center transition-colors"
+                                  aria-label="הוסף כמות"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </td>
+                            <td className="p-4 align-middle whitespace-nowrap font-semibold text-stone-800">
+                              {(Number(item.price) * item.quantity).toFixed(2)}{" "}
+                              ₪
+                            </td>
+                            <td className="p-4 align-middle">
+                              <button
+                                onClick={() => removeItem(item.id)}
+                                className="inline-flex items-center gap-2 px-3 h-9 rounded-full border border-red-200 text-red-700 hover:bg-red-50 hover:border-red-300 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                הסר
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-stone-50/80 font-semibold text-stone-800">
+                          <td className="p-4" colSpan={3}>
+                            סה"כ לתשלום
+                          </td>
+                          <td className="p-4 whitespace-nowrap">
+                            {total.toFixed(2)} ₪
+                          </td>
+                          <td className="p-4"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
 
-            <div className="flex items-center justify-between">
-              <button
-                onClick={handleClearCart}
-                className="px-4 py-2 border rounded-md hover:bg-gray-50 focus:ring-2 focus:ring-gray-200"
-              >
-                נקה עגלה
-              </button>
+                {/* פעולות כלליות */}
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <button
+                    onClick={handleClearCart}
+                    className="px-5 h-11 rounded-full border-2 border-stone-200 bg-white hover:border-amber-500 hover:bg-amber-50 font-semibold text-stone-700 transition-colors"
+                  >
+                    נקה עגלה
+                  </button>
 
-              <button
-                onClick={handleCreateOrder}
-                disabled={submitting}
-                className="px-6 py-2 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 focus:ring-2 focus:ring-green-500"
-              >
-                {submitting ? (
-                  <span className="flex items-center gap-2">
-                    <Spinner /> שולח...
-                  </span>
-                ) : (
-                  "בצע הזמנה"
-                )}
-              </button>
+                  <Link
+                    href="/order"
+                    className="px-5 h-11 grid place-items-center rounded-full bg-stone-900 text-white font-semibold hover:bg-stone-700 transition-colors"
+                  >
+                    המשך קניה
+                  </Link>
+                </div>
+              </section>
+
+              {/* סיכום הזמנה */}
+              <aside className="lg:col-span-1">
+                <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden sticky top-24">
+                  <div className="px-6 py-4 border-b border-stone-200 bg-stone-50/60">
+                    <h3 className="text-lg font-bold text-stone-800">
+                      סיכום הזמנה
+                    </h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="flex items-center justify-between text-stone-700">
+                      <span>מספר פריטים</span>
+                      <span className="font-semibold">
+                        {cart.reduce((s, i) => s + i.quantity, 0)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-stone-700">
+                      <span>סכום ביניים</span>
+                      <span className="font-semibold">
+                        {total.toFixed(2)} ₪
+                      </span>
+                    </div>
+                    <div className="pt-4 border-t border-stone-200 flex items-center justify-between text-stone-800 font-bold">
+                      <span>לתשלום</span>
+                      <span className="text-xl">{total.toFixed(2)} ₪</span>
+                    </div>
+
+                    <button
+                      onClick={handleCreateOrder}
+                      disabled={submitting}
+                      className="w-full mt-2 h-12 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.99] transition-all"
+                    >
+                      {submitting ? (
+                        <span className="inline-flex items-center gap-2">
+                          <Spinner /> שולח...
+                        </span>
+                      ) : (
+                        "בצע הזמנה"
+                      )}
+                    </button>
+
+                    {!userEmail && (
+                      <p className="text-xs text-stone-500 text-center">
+                        כדי להשלים הזמנה תצטרכו להתחבר.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </aside>
             </div>
+          )}
+        </div>
+      </main>
+
+      {/* Footer קטן תואם סגנון */}
+      <footer className="mt-auto bg-gradient-to-l from-stone-800 to-stone-900 text-white py-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center mb-3">
+            <div className="bg-gradient-to-br from-yellow-400 to-amber-600 text-white w-10 h-10 rounded-xl flex items-center justify-center">
+              <span className="text-lg font-bold">ב״מ</span>
+            </div>
+            <h3 className="text-xl font-bold mr-3">בית המדרש</h3>
           </div>
-        )}
-      </div>
+          <p className="text-stone-300">סיכום והשלמת הזמנה.</p>
+        </div>
+      </footer>
     </div>
   );
 }

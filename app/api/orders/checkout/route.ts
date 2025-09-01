@@ -7,9 +7,6 @@ import { getResend, FROM } from "@/lib/resend";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
 function escapeHtml(s: string) {
   return s.replace(
     /[&<>"']/g,
@@ -42,77 +39,97 @@ function renderSupplierEmail(params: {
     )
     .join("");
 
-  return `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif">
-    <h2 style="margin:0 0 8px">Order ${params.orderId.slice(0, 8)}</h2>
-    <p style="margin:0 0 16px">Hello ${escapeHtml(
-      params.supplierName
-    )}, a new order contains your items:</p>
-    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:560px">
-      <thead>
-        <tr>
-          <th style="text-align:right;padding:6px 8px;border-bottom:2px solid #ddd">Product</th>
-          <th style="text-align:center;padding:6px 8px;border-bottom:2px solid #ddd">Qty</th>
-          <th style="text-align:right;padding:6px 8px;border-bottom:2px solid #ddd">Unit Price</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <p style="color:#666;margin-top:16px">Sent automatically from yeshivashop.co.uk.</p>
-  </body></html>`;
+  return `<!doctype html>
+    <html dir="rtl" lang="he">
+      <head>
+        <meta charset="utf-8">
+      </head>
+      <body style="font-family:Arial,Helvetica,sans-serif">
+        <h2 style="margin:0 0 8px">הזמנה ${params.orderId.slice(0, 8)}</h2>
+        <p style="margin:0 0 16px">שלום ${escapeHtml(
+          params.supplierName
+        )}, התקבלה הזמנה חדשה הכוללת את המוצרים הבאים:</p>
+        <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:560px">
+          <thead>
+            <tr>
+              <th style="text-align:right;padding:6px 8px;border-bottom:2px solid #ddd">מוצר</th>
+              <th style="text-align:center;padding:6px 8px;border-bottom:2px solid #ddd">כמות</th>
+              <th style="text-align:right;padding:6px 8px;border-bottom:2px solid #ddd">מחיר יחידה</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <p style="color:#666;margin-top:16px">נשלח אוטומטית ממערכת ההזמנות.</p>
+      </body>
+    </html>`;
 }
 
 export async function POST(_req: NextRequest) {
   try {
-    // Supabase מחובר לסשן דרך קוקיות (RLS יעבוד אוטומטית)
-    // ...
     const supabase = createRouteHandlerClient({ cookies });
 
-    // 1) אימות משתמש
+    // 1. אימות משתמש
     const {
       data: { user },
       error: userErr,
     } = await supabase.auth.getUser();
     if (userErr || !user) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "unauthorized", step: "auth.getUser" },
+        { status: 401 }
+      );
     }
 
-    // 2) Checkout אטומי
-    type CheckoutOut = { order_id: string; total: number };
-
-    const rpc = await supabase.rpc("checkout_cart"); // <-- בלי <> ובלי {}
-    if (rpc.error || !rpc.data) {
+    // 2. קריאת RPC
+    type CheckoutRow = { order_id: string; total: number };
+    const { data: rpcData, error: rpcErr } = await supabase.rpc(
+      "checkout_cart"
+    );
+    if (rpcErr) {
       return NextResponse.json(
-        { error: rpc.error?.message || "checkout failed" },
+        { error: "checkout failed", details: rpcErr.message },
         { status: 400 }
       );
     }
 
-    const out = rpc.data as unknown as CheckoutOut; // טיפוס תוצאה אחיד
-    const orderId: string = out.order_id;
-    const total: number = Number(out.total) || 0;
-
-    // 3) שליפת פריטי ההזמנה לצורך מיילים
-    const { data: lines, error: linesErr } = await supabase
-      .from("order_items")
-      .select(
-        `
-        order_id,
-        quantity,
-        unit_price,
-        price,
-        product:products(id,name,supplier_id,price)
-      `
-      )
-      .eq("order_id", orderId);
-
-    if (linesErr) {
-      // לא מפילים את הבקשה בגלל מיילים — רק מתעדים
-      console.warn("[checkout] fetch order lines failed:", linesErr.message);
+    const rows = (rpcData ?? []) as CheckoutRow[];
+    if (!rows.length) {
+      return NextResponse.json(
+        { error: "checkout returned no rows", step: "rpc.empty" },
+        { status: 500 }
+      );
     }
 
-    // 4) מיילים לפי ספק (אם מוגדר RESEND_API_KEY)
-    const resend = await getResend();
+    const out = rows[0];
+    const orderId = String(out.order_id);
+    const total = Number(out.total) || 0;
 
+    // 3. פריטי הזמנה
+    const { data: lines } = await supabase
+      .from("order_items")
+      .select("product_id, quantity, unit_price, price")
+      .eq("order_id", orderId);
+
+    // 4. מוצרים
+    const productIds = Array.from(
+      new Set((lines ?? []).map((l) => l.product_id))
+    ).filter(Boolean);
+    let products: Array<{
+      id: string;
+      name: string;
+      supplier_id: string | null;
+      price: number;
+    }> = [];
+    if (productIds.length) {
+      const res = await supabase
+        .from("products")
+        .select("id, name, supplier_id, price")
+        .in("id", productIds);
+      products = res.data ?? [];
+    }
+
+    // 5. מיילים לספקים
+    const resend = await getResend();
     if (resend && lines?.length) {
       const bySupplier = new Map<
         string,
@@ -124,21 +141,17 @@ export async function POST(_req: NextRequest) {
       >();
 
       for (const row of lines) {
-        const supplierId = (row as any)?.product?.supplier_id as string | null;
+        const p = products.find((x) => x.id === row.product_id);
+        const supplierId = p?.supplier_id ?? null;
         if (!supplierId) continue;
-        const unit = Number(
-          (row as any)?.unit_price ??
-            (row as any)?.price ??
-            (row as any)?.product?.price ??
-            0
-        );
-        if (!bySupplier.has(supplierId)) {
+        if (!bySupplier.has(supplierId))
           bySupplier.set(supplierId, { name: "", email: null, lines: [] });
-        }
         bySupplier.get(supplierId)!.lines.push({
-          name: (row as any)?.product?.name ?? "Product",
-          qty: Number((row as any)?.quantity) || 1,
-          price: unit,
+          name: p?.name ?? "Product",
+          qty: Number(row.quantity) || 1,
+          price: Number(
+            (row as any).unit_price ?? (row as any).price ?? p?.price ?? 0
+          ),
         });
       }
 
@@ -157,13 +170,25 @@ export async function POST(_req: NextRequest) {
           }
         });
 
-        const sends = Array.from(bySupplier.values()).map(async (s) => {
-          if (!s.email || s.lines.length === 0) return;
+        const delayMs = 700; // מעט מתחת למגבלת 2 בקשות לשנייה
+        for (const s of bySupplier.values()) {
+          if (!s.email || s.lines.length === 0) continue;
+
           const html = renderSupplierEmail({
             supplierName: s.name || "Supplier",
             orderId,
             lines: s.lines,
           });
+
+          const text = [
+            `הזמנה ${orderId.slice(0, 8)}`,
+            ...s.lines.map(
+              (l) => `• ${l.qty} x ${l.name} – ₪${Number(l.price).toFixed(2)}`
+            ),
+            "",
+            "נשלח אוטומטית ממערכת ההזמנות.",
+          ].join("\n");
+
           await resend.emails.send({
             from: FROM,
             to: s.email,
@@ -172,21 +197,16 @@ export async function POST(_req: NextRequest) {
               0
             )} items`,
             html,
+            text,
           });
-        });
 
-        await Promise.allSettled(sends);
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
       }
-    } else if (!resend) {
-      console.warn(
-        "[resend] Missing API key; skipping supplier emails for order",
-        orderId
-      );
     }
 
     return NextResponse.json({ ok: true, orderId, total }, { status: 201 });
   } catch (e: any) {
-    console.error("checkout error:", e);
     return NextResponse.json(
       { error: e?.message || "internal error" },
       { status: 500 }
