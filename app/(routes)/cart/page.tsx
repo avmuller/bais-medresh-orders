@@ -7,8 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 import { useHybridCart } from "@/hooks/useHybridCart";
 import { Trash2 } from "lucide-react";
 
-// 🛒 עגלה דרך DB בלבד (אורח רואה עגלה ריקה)
-
 // Spinner קטן
 const Spinner = () => (
   <div className="inline-block animate-spin h-4 w-4 border-2 border-gray-300 border-t-gray-600 rounded-full" />
@@ -23,7 +21,6 @@ const ErrorMessage = ({ message }: { message: string }) => (
 
 export default function CartPage() {
   const router = useRouter();
-
   const { cart, updateQty, removeItem, clearCart, total, hydrated } =
     useHybridCart();
 
@@ -31,17 +28,13 @@ export default function CartPage() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 🪄 שינוי 1: שימוש ב-onAuthStateChange כדי להאזין לשינויים
+  // האזנה לשינוי מצב התחברות
   useEffect(() => {
-    // מנוי (Subscription) למאזין שינויי אוטנטיקציה
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        // בודק אם קיים משתמש
+      (_event, session) => {
         setUserEmail(session?.user?.email ?? null);
       }
     );
-
-    // ניקוי המאזין כשהקומפוננטה נעלמת כדי למנוע דליפת זיכרון
     return () => {
       authListener?.subscription.unsubscribe();
     };
@@ -63,25 +56,25 @@ export default function CartPage() {
 
     setSubmitting(true);
 
-    // ודא סשן (לשליחת Bearer token ל-API)
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    if (!session) {
-      // בלי alert — הודעת שגיאה + ניווט למסך תחברות
-      setError("כדי לבצע הזמנה צריך להתחבר.");
-      router.push("/auth");
-      setSubmitting(false);
-      return;
-    }
-
     try {
+      const {
+        data: { session },
+        error: sessErr,
+      } = await supabase.auth.getSession();
+
+      if (sessErr) throw sessErr;
+      if (!session) {
+        setError("כדי לבצע הזמנה צריך להתחבר.");
+        router.push("/auth");
+        setSubmitting(false);
+        return;
+      }
+
       const res = await fetch("/api/orders/checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`, // ✅
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           cart: cart.map((i) => ({ id: i.id, quantity: i.quantity })),
@@ -91,7 +84,6 @@ export default function CartPage() {
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || res.statusText);
 
-      // 📝 שמירת תקציר הזמנה ל-sessionStorage כדי להציג בדף תודה
       try {
         const snapshot = {
           orderId: j.orderId as string | undefined,
@@ -108,9 +100,6 @@ export default function CartPage() {
         sessionStorage.setItem("last_order", JSON.stringify(snapshot));
       } catch {}
 
-      clearCart();
-
-      // נווט עם מזהה הזמנה אם קיים
       const orderId = j.orderId as string | undefined;
       router.push(orderId ? `/order/thanks?order=${orderId}` : "/order/thanks");
     } catch (err: any) {
@@ -120,7 +109,7 @@ export default function CartPage() {
     }
   };
 
-  // הצג טעינה עד שהעגלה נטענת (מה-DB בהוק)
+  // הצג טעינה רק עד שההוק מסמן hydrated (כעת אורח = מיד true)
   if (!hydrated) {
     return (
       <div
@@ -137,11 +126,10 @@ export default function CartPage() {
       dir="rtl"
       className="flex flex-col min-h-screen bg-gradient-to-b from-amber-50 to-stone-100"
     >
-      {/* Header תואם להזמנות */}
+      {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-lg border-b border-stone-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
-            {/* Logo */}
             <Link href="/order" className="flex items-center group">
               <div className="bg-gradient-to-br from-yellow-400 to-amber-600 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg">
                 <span className="text-xl font-bold">ב״מ</span>
@@ -154,7 +142,6 @@ export default function CartPage() {
               </div>
             </Link>
 
-            {/* פעולות חשבון/ניווט */}
             <div className="flex items-center gap-2 sm:gap-3">
               <Link
                 href="/order"
@@ -164,7 +151,6 @@ export default function CartPage() {
               </Link>
 
               {userEmail ? (
-                // ✅ שינוי 2: הסרת המייל מכפתור ההתנתקות
                 <button
                   onClick={async () => {
                     await supabase.auth.signOut();
@@ -213,17 +199,14 @@ export default function CartPage() {
               {/* רשימת מוצרים */}
               <section className="lg:col-span-2">
                 <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-                  {/* כותרת הטבלה */}
                   <div className="px-6 py-4 border-b border-stone-200 bg-stone-50/60">
                     <h2 className="text-xl font-bold text-stone-800">
                       פרטי עגלה
                     </h2>
                   </div>
 
-                  {/* טבלה רספונסיבית */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-right">
-                      <caption className="sr-only">פרטי המוצרים בעגלה</caption>
                       <thead className="bg-stone-50 text-stone-600">
                         <tr className="text-sm">
                           <th className="p-4 font-medium">מוצר</th>
@@ -316,7 +299,6 @@ export default function CartPage() {
                   </div>
                 </div>
 
-                {/* פעולות כלליות */}
                 <div className="mt-4 flex items-center justify-between gap-3">
                   <button
                     onClick={handleClearCart}
@@ -373,12 +355,6 @@ export default function CartPage() {
                         "בצע הזמנה"
                       )}
                     </button>
-
-                    {!userEmail && (
-                      <p className="text-xs text-stone-500 text-center">
-                        כדי להשלים הזמנה תצטרכו להתחבר.
-                      </p>
-                    )}
                   </div>
                 </div>
               </aside>
@@ -387,7 +363,6 @@ export default function CartPage() {
         </div>
       </main>
 
-      {/* Footer קטן תואם סגנון */}
       <footer className="mt-auto bg-gradient-to-l from-stone-800 to-stone-900 text-white py-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center mb-3">

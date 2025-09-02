@@ -26,7 +26,7 @@ type Product = {
   created_at?: string | null;
 };
 
-/* Helper: safe replace without trailing '?' */
+/* Helper */
 function replaceWithSearch(router: ReturnType<typeof useRouter>, url: URL) {
   const qs = url.searchParams.toString();
   router.replace(qs ? `${url.pathname}?${qs}` : url.pathname);
@@ -81,7 +81,6 @@ function OrderBanners() {
   );
 }
 
-/* ------------ utils ------------ */
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
@@ -172,29 +171,24 @@ function OrderPageInner() {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
-  const [authLoading, setAuthLoading] = useState(true); // <--- סטייט חדש לבדיקת אימות
   const { addItem, count } = useHybridCart();
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Auth
+  // Auth (לא חוסם טעינת מוצרים)
   useEffect(() => {
     let mounted = true;
 
-    // פונקציה לבדיקת הסשן הראשוני
-    const checkSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (mounted) {
-        setSession(data.session ?? null);
-        setAuthLoading(false); // <--- סיימנו לבדוק אימות, אפשר להמשיך
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (mounted) setSession(data.session ?? null);
+      } catch (e) {
+        console.error("getSession failed", e);
       }
-    };
+    })();
 
-    checkSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data } = supabase.auth.onAuthStateChange((_event, s) => {
       if (mounted) {
         setSession(s);
         if (s) setShowLoginPrompt(false);
@@ -203,45 +197,42 @@ function OrderPageInner() {
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      data.subscription.unsubscribe();
     };
   }, []);
 
-  // Data
+  // Data: נטען תמיד, בלי תלות באימות
   useEffect(() => {
-    // <--- אל תרוץ עד שסטטוס האימות ידוע
-    if (authLoading) {
-      return;
-    }
-
     let cancelled = false;
     const fetchData = async () => {
       try {
         setLoading(true);
-        const { data: categoriesData } = await supabase
+        const { data: categoriesData, error: catErr } = await supabase
           .from("categories")
           .select("id,name,parent_id,slug")
           .order("name");
-        const { data: productsData } = await supabase
+        if (catErr) console.error(catErr);
+
+        const { data: productsData, error: prodErr } = await supabase
           .from("products")
           .select("id,name,price,category_id,image_url,created_at")
           .order("created_at", { ascending: false });
+        if (prodErr) console.error(prodErr);
+
         if (cancelled) return;
         setCategories((categoriesData as Category[]) || []);
         setProducts((productsData as Product[]) || []);
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     };
     fetchData();
     return () => {
       cancelled = true;
     };
-  }, [authLoading]); // <--- הוספת תלות בסטטוס האימות
+  }, []);
 
-  // Sync selection with URL (also back/forward)
+  // Sync selection with URL
   useEffect(() => {
     if (!categories.length) return;
     const cat = sp.get("cat");
@@ -285,7 +276,7 @@ function OrderPageInner() {
 
   // Filter + search
   const filteredProducts = useMemo(() => {
-    let categoryFiltered: Product[];
+    let categoryFiltered: Product[] = [];
     if (selected.kind === "all") categoryFiltered = products;
     else if (selected.kind === "uncategorized")
       categoryFiltered = products.filter((p) => !p.category_id);
@@ -364,7 +355,6 @@ function OrderPageInner() {
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-lg border-b border-stone-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
-            {/* Logo */}
             <div className="flex items-center">
               <div className="bg-gradient-to-br from-yellow-400 to-amber-600 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg">
                 <span className="text-xl font-bold">ב״מ</span>
@@ -417,7 +407,7 @@ function OrderPageInner() {
           </div>
         </div>
 
-        {/* Categories row */}
+        {/* קטגוריות */}
         <div className="border-t border-stone-200 py-4">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-center flex-wrap gap-3">
@@ -532,7 +522,7 @@ function OrderPageInner() {
             </h2>
           </div>
 
-          {loading || authLoading ? (
+          {loading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
               {Array.from({ length: 10 }).map((_, i) => (
                 <div

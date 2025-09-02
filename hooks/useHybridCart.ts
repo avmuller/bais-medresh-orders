@@ -3,17 +3,14 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { useDbCart, DbCartLine } from "@/hooks/useDbCart";
 
-// Define a type for a new item being added
 type NewCartItemPayload = {
   id: string;
   name: string;
-
   price: number;
   quantity?: number;
   image_url?: string | null;
 };
 
-// Define a type for the item structure used in the UI
 type CartItem = {
   id: string;
   name: string;
@@ -22,53 +19,45 @@ type CartItem = {
   image_url: string | null;
 };
 
-// Define a type for granular loading states
 type CartLoadingStates = {
   clearing: boolean;
   items: Record<string, "updating" | "removing" | "adding">;
 };
 
-/**
- * Hook משופר לניהול עגלת קניות היברידית.
- * - מיישם UI אופטימי לעדכונים מיידיים.
- * - מספק מצבי טעינה ושגיאה מפורטים.
- * - מפריד בין משתמש מחובר (DB) לאורח (ריק).
- */
 export function useHybridCart() {
-  const db = useDbCart(true); // המקור האמיתי של המידע (Source of Truth)
+  const db = useDbCart(true);
 
-  // --- ניהול אימות ---
+  // --- Auth state ---
   const [session, setSession] = useState<Session | null>(null);
   const [authIsLoading, setAuthIsLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
-    const checkSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (mounted) {
-        setSession(data.session ?? null);
-        setAuthIsLoading(false);
-      }
-    };
-    checkSession();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, s) => {
-      if (mounted) {
-        setSession(s ?? null);
-        // אם המשתמש התנתק, נקה את המצב האופטימי
-        if (!s) setOptimisticItems([]);
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (mounted) setSession(data.session ?? null);
+      } catch (e) {
+        console.error("getSession failed", e);
+      } finally {
+        if (mounted) setAuthIsLoading(false);
       }
+    })();
+
+    const { data } = supabase.auth.onAuthStateChange((_e, s) => {
+      if (!mounted) return;
+      setSession(s ?? null);
+      if (!s) setOptimisticItems([]); // ניקוי עם התנתקות
     });
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      data.subscription.unsubscribe();
     };
   }, []);
 
-  // --- ניהול מצב אופטימי ---
+  // --- Optimistic state ---
   const [optimisticItems, setOptimisticItems] = useState<DbCartLine[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loadingStates, setLoadingStates] = useState<CartLoadingStates>({
@@ -76,14 +65,11 @@ export function useHybridCart() {
     items: {},
   });
 
-  // סנכרון המצב האופטימי עם המידע מה-DB כשהוא משתנה
   useEffect(() => {
     setOptimisticItems(db.items);
   }, [db.items]);
 
   const isGuest = !session?.user;
-
-  // --- פונקציות אופטימיות (Memoized with useCallback) ---
 
   const addItem = useCallback(
     async (itemPayload: NewCartItemPayload) => {
@@ -112,7 +98,7 @@ export function useHybridCart() {
         });
       }
     },
-    [isGuest, db.addItem]
+    [isGuest, db]
   );
 
   const updateQty = useCallback(
@@ -126,12 +112,10 @@ export function useHybridCart() {
 
       const newQuantity = originalItems[itemIndex].quantity + delta;
       if (newQuantity < 1) {
-        // אם הכמות יורדת מתחת ל-1, נסיר את הפריט במקום
         await removeItem(itemId);
         return;
       }
 
-      // 1. עדכון אופטימי מיידי של ה-UI
       const updatedItems = [...originalItems];
       updatedItems[itemIndex] = {
         ...updatedItems[itemIndex],
@@ -144,11 +128,9 @@ export function useHybridCart() {
       }));
 
       try {
-        // 2. שליחת הבקשה ל-DB ברקע
         await db.updateQty(itemId, delta);
       } catch (err: any) {
         setError(err.message || "שגיאה בעדכון כמות.");
-        // 3. אם יש שגיאה, החזר את המצב לקדמותו
         setOptimisticItems(originalItems);
       } finally {
         setLoadingStates((prev) => {
@@ -158,7 +140,7 @@ export function useHybridCart() {
         });
       }
     },
-    [isGuest, optimisticItems, db.updateQty]
+    [isGuest, optimisticItems, db]
   );
 
   const removeItem = useCallback(
@@ -171,7 +153,6 @@ export function useHybridCart() {
         (i) => i.product_id !== itemId
       );
 
-      // 1. עדכון אופטימי
       setOptimisticItems(itemsWithoutRemoved);
       setLoadingStates((prev) => ({
         ...prev,
@@ -179,11 +160,9 @@ export function useHybridCart() {
       }));
 
       try {
-        // 2. קריאה ל-DB
         await db.removeItem(itemId);
       } catch (err: any) {
         setError(err.message || "שגיאה בהסרת פריט.");
-        // 3. החזרה למצב קודם במקרה של שגיאה
         setOptimisticItems(originalItems);
       } finally {
         setLoadingStates((prev) => {
@@ -193,7 +172,7 @@ export function useHybridCart() {
         });
       }
     },
-    [isGuest, optimisticItems, db.removeItem]
+    [isGuest, optimisticItems, db]
   );
 
   const clearCart = useCallback(async () => {
@@ -201,27 +180,21 @@ export function useHybridCart() {
     setError(null);
 
     const originalItems = [...optimisticItems];
-
-    // 1. עדכון אופטימי
     setOptimisticItems([]);
     setLoadingStates((prev) => ({ ...prev, clearing: true }));
 
     try {
-      // 2. קריאה ל-DB
       await db.clearCart();
     } catch (err: any) {
       setError(err.message || "שגיאה בניקוי העגלה.");
-      // 3. החזרה למצב קודם
       setOptimisticItems(originalItems);
     } finally {
       setLoadingStates((prev) => ({ ...prev, clearing: false }));
     }
-  }, [isGuest, optimisticItems, db.clearCart]);
+  }, [isGuest, optimisticItems, db]);
 
-  // --- הרכבת ה-API שיוחזר מה-Hook ---
-
+  // --- API ל־UI ---
   const api = useMemo(() => {
-    // פורמט העגלה שיוצג ב-UI
     const cartForUI: CartItem[] = optimisticItems.map((i) => ({
       id: i.product_id,
       name: i.name,
@@ -236,7 +209,7 @@ export function useHybridCart() {
       0
     );
 
-    // אם המשתמש הוא אורח או שהאימות עדיין בטעינה, החזר API ריק
+    // אורח: מוכן מיד (לא ממתינים לאימות)
     if (isGuest || authIsLoading) {
       return {
         cart: [] as CartItem[],
@@ -246,14 +219,13 @@ export function useHybridCart() {
         clearCart: () => {},
         count: 0,
         total: 0,
-        hydrated: !authIsLoading, // העגלה "טעונה" כשהאימות הסתיים
+        hydrated: true, // <<< העדכון החשוב
         mode: "guest" as const,
         loadingStates,
         error,
       };
     }
 
-    // אם המשתמש מחובר, החזר את ה-API המלא עם הפונקציות האופטימיות
     return {
       cart: cartForUI,
       addItem,

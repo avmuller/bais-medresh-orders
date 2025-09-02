@@ -1,4 +1,3 @@
-// hooks/useDbCart.ts
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -41,22 +40,18 @@ export function useDbCart(enabled: boolean = true) {
   const [items, setItems] = useState<DbCartLine[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
-  // טוען את העגלה למשתמש הנוכחי, או מאפס אם אין משתמש
-  // hooks/useDbCart.ts
-
   const loadForCurrentUser = useCallback(async () => {
     if (!enabled) return;
 
-    // עוטפים את הלוגיקה כדי לטפל בשגיאות ולהבטיח סיום טעינה
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: userRes, error: uErr } = await supabase.auth.getUser();
+      if (uErr) throw uErr;
 
+      const user = userRes.user;
       if (!user) {
         setCartId(null);
         setItems([]);
-        return; // אין צורך לעשות כלום ב-finally כאן כי hydrated כבר יהיה true מהריצה הבאה
+        return;
       }
 
       const cid = await getOrCreateCartId(user.id);
@@ -66,29 +61,24 @@ export function useDbCart(enabled: boolean = true) {
         .from("cart_items")
         .select(
           `
-        id,
-        product_id,
-        quantity,
-        product:products!cart_items_product_id_fkey (
-          id, name, price, image_url
-        )
-      `
+            id,
+            product_id,
+            quantity,
+            product:products!cart_items_product_id_fkey (
+              id, name, price, image_url
+            )
+          `
         )
         .eq("cart_id", cid);
 
-      if (error) {
-        // זורקים את השגיאה כדי שה-catch יתפוס אותה
-        throw error;
-      }
+      if (error) throw error;
 
-      // ... (כל קוד המיפוי נשאר זהה)
       const rows = (data ?? []) as RawItem[];
       const mapped: DbCartLine[] = rows
         .map((r) => {
           const candidate = r.product ?? r.products;
           const prod = Array.isArray(candidate) ? candidate[0] : candidate;
           if (!prod) return null;
-
           return {
             product_id: r.product_id,
             name: prod.name,
@@ -102,10 +92,8 @@ export function useDbCart(enabled: boolean = true) {
       setItems(mapped);
     } catch (err) {
       console.error("Failed to load user cart:", err);
-      // במקרה של שגיאה, נאפס את העגלה כדי שהמשתמש יראה עגלה ריקה ולא שגיאה
       setItems([]);
     } finally {
-      // החלק הכי חשוב: קורא לזה תמיד, בין אם הייתה הצלחה או שגיאה
       setHydrated(true);
     }
   }, [enabled]);
@@ -116,12 +104,10 @@ export function useDbCart(enabled: boolean = true) {
     loadForCurrentUser();
   }, [enabled, loadForCurrentUser]);
 
-  // האזן לשינויים ב־Auth: ניקוי מיידי בהתנתקות, טעינה מחדש בהתחברות/רענון טוקן
+  // האזנה לשינויים ב־Auth
   useEffect(() => {
     if (!enabled) return;
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT" || !session) {
         setCartId(null);
         setItems([]);
@@ -132,7 +118,7 @@ export function useDbCart(enabled: boolean = true) {
         await loadForCurrentUser();
       }
     });
-    return () => subscription.unsubscribe();
+    return () => data.subscription.unsubscribe();
   }, [enabled, loadForCurrentUser]);
 
   const count = useMemo(
@@ -189,7 +175,9 @@ export function useDbCart(enabled: boolean = true) {
         .from("cart_items")
         .upsert(
           [{ cart_id: cartId, product_id: line.product_id, quantity: newQty }],
-          { onConflict: "cart_id,product_id" }
+          {
+            onConflict: "cart_id,product_id",
+          }
         );
 
       if (error) console.error("addItem upsert error:", error);
