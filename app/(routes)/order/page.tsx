@@ -172,12 +172,48 @@ function OrderPageInner() {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true); // <--- סטייט חדש לבדיקת אימות
   const { addItem, count } = useHybridCart();
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Auth
+  useEffect(() => {
+    let mounted = true;
+
+    // פונקציה לבדיקת הסשן הראשוני
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (mounted) {
+        setSession(data.session ?? null);
+        setAuthLoading(false); // <--- סיימנו לבדוק אימות, אפשר להמשיך
+      }
+    };
+
+    checkSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, s) => {
+      if (mounted) {
+        setSession(s);
+        if (s) setShowLoginPrompt(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
   // Data
   useEffect(() => {
+    // <--- אל תרוץ עד שסטטוס האימות ידוע
+    if (authLoading) {
+      return;
+    }
+
     let cancelled = false;
     const fetchData = async () => {
       try {
@@ -194,14 +230,16 @@ function OrderPageInner() {
         setCategories((categoriesData as Category[]) || []);
         setProducts((productsData as Product[]) || []);
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
     fetchData();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authLoading]); // <--- הוספת תלות בסטטוס האימות
 
   // Sync selection with URL (also back/forward)
   useEffect(() => {
@@ -225,24 +263,6 @@ function OrderPageInner() {
     }
     setSelected({ kind: "all" });
   }, [sp, categories]);
-
-  // Auth
-  useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (mounted) setSession(data.session ?? null);
-    });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      if (s) setShowLoginPrompt(false);
-    });
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
 
   // Hierarchy
   const { rootCategories, childrenByParent } = useMemo(() => {
@@ -515,7 +535,7 @@ function OrderPageInner() {
             </h2>
           </div>
 
-          {loading ? (
+          {loading || authLoading ? ( // <--- הצג טעינה גם בזמן בדיקת האימות
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {Array.from({ length: 8 }).map((_, i) => (
                 <div

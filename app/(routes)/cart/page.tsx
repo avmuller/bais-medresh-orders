@@ -31,14 +31,20 @@ export default function CartPage() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // טעינת משתמש
+  // 🪄 שינוי 1: שימוש ב-onAuthStateChange כדי להאזין לשינויים
   useEffect(() => {
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      setUserEmail(user?.email || null);
-    })();
+    // מנוי (Subscription) למאזין שינויי אוטנטיקציה
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        // בודק אם קיים משתמש
+        setUserEmail(session?.user?.email ?? null);
+      }
+    );
+
+    // ניקוי המאזין כשהקומפוננטה נעלמת כדי למנוע דליפת זיכרון
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
   }, []);
 
   const handleClearCart = () => {
@@ -158,6 +164,7 @@ export default function CartPage() {
               </Link>
 
               {userEmail ? (
+                // ✅ שינוי 2: הסרת המייל מכפתור ההתנתקות
                 <button
                   onClick={async () => {
                     await supabase.auth.signOut();
@@ -165,10 +172,7 @@ export default function CartPage() {
                   }}
                   className="px-4 h-10 rounded-full bg-stone-900 text-white hover:bg-stone-700 transition-colors text-sm"
                 >
-                  התנתקות{" "}
-                  <span className="opacity-70 hidden sm:inline">
-                    ({userEmail})
-                  </span>
+                  התנתקות
                 </button>
               ) : (
                 <Link

@@ -42,28 +42,30 @@ export function useDbCart(enabled: boolean = true) {
   const [hydrated, setHydrated] = useState(false);
 
   // טוען את העגלה למשתמש הנוכחי, או מאפס אם אין משתמש
+  // hooks/useDbCart.ts
+
   const loadForCurrentUser = useCallback(async () => {
     if (!enabled) return;
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    // עוטפים את הלוגיקה כדי לטפל בשגיאות ולהבטיח סיום טעינה
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    if (!user) {
-      setCartId(null);
-      setItems([]);
-      setHydrated(true);
-      return;
-    }
+      if (!user) {
+        setCartId(null);
+        setItems([]);
+        return; // אין צורך לעשות כלום ב-finally כאן כי hydrated כבר יהיה true מהריצה הבאה
+      }
 
-    const cid = await getOrCreateCartId(user.id);
-    setCartId(cid);
+      const cid = await getOrCreateCartId(user.id);
+      setCartId(cid);
 
-    // ⚠️ עדכן את שם ה-FK אם שונה אצלך
-    const { data, error } = await supabase
-      .from("cart_items")
-      .select(
-        `
+      const { data, error } = await supabase
+        .from("cart_items")
+        .select(
+          `
         id,
         product_id,
         quantity,
@@ -71,39 +73,41 @@ export function useDbCart(enabled: boolean = true) {
           id, name, price, image_url
         )
       `
-      )
-      .eq("cart_id", cid);
+        )
+        .eq("cart_id", cid);
 
-    if (error) {
-      console.error("load cart_items error:", error);
+      if (error) {
+        // זורקים את השגיאה כדי שה-catch יתפוס אותה
+        throw error;
+      }
+
+      // ... (כל קוד המיפוי נשאר זהה)
+      const rows = (data ?? []) as RawItem[];
+      const mapped: DbCartLine[] = rows
+        .map((r) => {
+          const candidate = r.product ?? r.products;
+          const prod = Array.isArray(candidate) ? candidate[0] : candidate;
+          if (!prod) return null;
+
+          return {
+            product_id: r.product_id,
+            name: prod.name,
+            price: Number(prod.price),
+            quantity: r.quantity,
+            image_url: prod.image_url ?? null,
+          } as DbCartLine;
+        })
+        .filter(Boolean) as DbCartLine[];
+
+      setItems(mapped);
+    } catch (err) {
+      console.error("Failed to load user cart:", err);
+      // במקרה של שגיאה, נאפס את העגלה כדי שהמשתמש יראה עגלה ריקה ולא שגיאה
+      setItems([]);
+    } finally {
+      // החלק הכי חשוב: קורא לזה תמיד, בין אם הייתה הצלחה או שגיאה
       setHydrated(true);
-      return;
     }
-
-    const rows = (data ?? []) as RawItem[];
-
-    const mapped: DbCartLine[] = rows
-      .map((r) => {
-        const candidate = (r.product ?? r.products) as
-          | ProductRow
-          | ProductRow[]
-          | null
-          | undefined;
-        const prod = Array.isArray(candidate) ? candidate[0] : candidate;
-        if (!prod) return null;
-
-        return {
-          product_id: r.product_id,
-          name: prod.name,
-          price: Number(prod.price),
-          quantity: r.quantity,
-          image_url: prod.image_url ?? null,
-        } as DbCartLine;
-      })
-      .filter(Boolean) as DbCartLine[];
-
-    setItems(mapped);
-    setHydrated(true);
   }, [enabled]);
 
   // טעינה ראשונית
