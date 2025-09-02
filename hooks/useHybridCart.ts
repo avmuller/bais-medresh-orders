@@ -1,3 +1,4 @@
+// hooks/useHybridCart.ts
 import { useEffect, useMemo, useState, useCallback } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
@@ -27,37 +28,29 @@ type CartLoadingStates = {
 export function useHybridCart() {
   const db = useDbCart(true);
 
-  // --- Auth state ---
   const [session, setSession] = useState<Session | null>(null);
   const [authIsLoading, setAuthIsLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
-
     (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (mounted) setSession(data.session ?? null);
-      } catch (e) {
-        console.error("getSession failed", e);
-      } finally {
-        if (mounted) setAuthIsLoading(false);
+      const { data } = await supabase.auth.getSession();
+      if (mounted) {
+        setSession(data.session ?? null);
+        setAuthIsLoading(false);
       }
     })();
 
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => {
-      if (!mounted) return;
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s ?? null);
-      if (!s) setOptimisticItems([]); // ניקוי עם התנתקות
+      if (!s) setOptimisticItems([]);
     });
 
-    return () => {
-      mounted = false;
-      data.subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
-  // --- Optimistic state ---
   const [optimisticItems, setOptimisticItems] = useState<DbCartLine[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loadingStates, setLoadingStates] = useState<CartLoadingStates>({
@@ -65,9 +58,7 @@ export function useHybridCart() {
     items: {},
   });
 
-  useEffect(() => {
-    setOptimisticItems(db.items);
-  }, [db.items]);
+  useEffect(() => setOptimisticItems(db.items), [db.items]);
 
   const isGuest = !session?.user;
 
@@ -75,11 +66,10 @@ export function useHybridCart() {
     async (itemPayload: NewCartItemPayload) => {
       if (isGuest) return;
       setError(null);
-      setLoadingStates((prev) => ({
-        ...prev,
-        items: { ...prev.items, [itemPayload.id]: "adding" },
+      setLoadingStates((p) => ({
+        ...p,
+        items: { ...p.items, [itemPayload.id]: "adding" },
       }));
-
       try {
         await db.addItem({
           product_id: itemPayload.id,
@@ -91,14 +81,14 @@ export function useHybridCart() {
       } catch (err: any) {
         setError(err.message || "שגיאה בהוספת פריט לעגלה.");
       } finally {
-        setLoadingStates((prev) => {
-          const newItems = { ...prev.items };
-          delete newItems[itemPayload.id];
-          return { ...prev, items: newItems };
+        setLoadingStates((p) => {
+          const items = { ...p.items };
+          delete items[itemPayload.id];
+          return { ...p, items };
         });
       }
     },
-    [isGuest, db]
+    [isGuest, db.addItem]
   );
 
   const updateQty = useCallback(
@@ -106,96 +96,84 @@ export function useHybridCart() {
       if (isGuest) return;
       setError(null);
 
-      const originalItems = [...optimisticItems];
-      const itemIndex = originalItems.findIndex((i) => i.product_id === itemId);
-      if (itemIndex === -1) return;
+      const original = [...optimisticItems];
+      const idx = original.findIndex((i) => i.product_id === itemId);
+      if (idx === -1) return;
 
-      const newQuantity = originalItems[itemIndex].quantity + delta;
-      if (newQuantity < 1) {
+      const newQty = original[idx].quantity + delta;
+      if (newQty < 1) {
         await removeItem(itemId);
         return;
       }
 
-      const updatedItems = [...originalItems];
-      updatedItems[itemIndex] = {
-        ...updatedItems[itemIndex],
-        quantity: newQuantity,
-      };
-      setOptimisticItems(updatedItems);
-      setLoadingStates((prev) => ({
-        ...prev,
-        items: { ...prev.items, [itemId]: "updating" },
+      const updated = [...original];
+      updated[idx] = { ...updated[idx], quantity: newQty };
+      setOptimisticItems(updated);
+      setLoadingStates((p) => ({
+        ...p,
+        items: { ...p.items, [itemId]: "updating" },
       }));
 
       try {
         await db.updateQty(itemId, delta);
       } catch (err: any) {
         setError(err.message || "שגיאה בעדכון כמות.");
-        setOptimisticItems(originalItems);
+        setOptimisticItems(original);
       } finally {
-        setLoadingStates((prev) => {
-          const newItems = { ...prev.items };
-          delete newItems[itemId];
-          return { ...prev, items: newItems };
+        setLoadingStates((p) => {
+          const items = { ...p.items };
+          delete items[itemId];
+          return { ...p, items };
         });
       }
     },
-    [isGuest, optimisticItems, db]
+    [isGuest, optimisticItems, db.updateQty]
   );
 
   const removeItem = useCallback(
     async (itemId: string) => {
       if (isGuest) return;
       setError(null);
-
-      const originalItems = [...optimisticItems];
-      const itemsWithoutRemoved = originalItems.filter(
-        (i) => i.product_id !== itemId
-      );
-
-      setOptimisticItems(itemsWithoutRemoved);
-      setLoadingStates((prev) => ({
-        ...prev,
-        items: { ...prev.items, [itemId]: "removing" },
+      const original = [...optimisticItems];
+      setOptimisticItems(original.filter((i) => i.product_id !== itemId));
+      setLoadingStates((p) => ({
+        ...p,
+        items: { ...p.items, [itemId]: "removing" },
       }));
-
       try {
         await db.removeItem(itemId);
       } catch (err: any) {
         setError(err.message || "שגיאה בהסרת פריט.");
-        setOptimisticItems(originalItems);
+        setOptimisticItems(original);
       } finally {
-        setLoadingStates((prev) => {
-          const newItems = { ...prev.items };
-          delete newItems[itemId];
-          return { ...prev, items: newItems };
+        setLoadingStates((p) => {
+          const items = { ...p.items };
+          delete items[itemId];
+          return { ...p, items };
         });
       }
     },
-    [isGuest, optimisticItems, db]
+    [isGuest, optimisticItems, db.removeItem]
   );
 
   const clearCart = useCallback(async () => {
     if (isGuest) return;
     setError(null);
-
-    const originalItems = [...optimisticItems];
+    const original = [...optimisticItems];
     setOptimisticItems([]);
-    setLoadingStates((prev) => ({ ...prev, clearing: true }));
-
+    setLoadingStates((p) => ({ ...p, clearing: true }));
     try {
       await db.clearCart();
     } catch (err: any) {
       setError(err.message || "שגיאה בניקוי העגלה.");
-      setOptimisticItems(originalItems);
+      setOptimisticItems(original);
     } finally {
-      setLoadingStates((prev) => ({ ...prev, clearing: false }));
+      setLoadingStates((p) => ({ ...p, clearing: false }));
     }
-  }, [isGuest, optimisticItems, db]);
+  }, [isGuest, optimisticItems, db.clearCart]);
 
-  // --- API ל־UI ---
   const api = useMemo(() => {
-    const cartForUI: CartItem[] = optimisticItems.map((i) => ({
+    const cartForUI = optimisticItems.map((i) => ({
       id: i.product_id,
       name: i.name,
       price: i.price,
@@ -203,14 +181,13 @@ export function useHybridCart() {
       image_url: i.image_url ?? null,
     }));
 
-    const count = cartForUI.reduce((sum, item) => sum + item.quantity, 0);
+    const count = cartForUI.reduce((s, item) => s + item.quantity, 0);
     const total = cartForUI.reduce(
-      (sum, item) => sum + item.price * item.quantity,
+      (s, item) => s + item.price * item.quantity,
       0
     );
 
-    // אורח: מוכן מיד (לא ממתינים לאימות)
-    if (isGuest || authIsLoading) {
+    if (isGuest) {
       return {
         cart: [] as CartItem[],
         addItem: () => {},
@@ -219,8 +196,24 @@ export function useHybridCart() {
         clearCart: () => {},
         count: 0,
         total: 0,
-        hydrated: true, // <<< העדכון החשוב
+        hydrated: true, // ← אורח מוכן מיד
         mode: "guest" as const,
+        loadingStates,
+        error,
+      };
+    }
+
+    if (authIsLoading) {
+      return {
+        cart: [] as CartItem[],
+        addItem: () => {},
+        updateQty: () => {},
+        removeItem: () => {},
+        clearCart: () => {},
+        count: 0,
+        total: 0,
+        hydrated: false,
+        mode: "db" as const,
         loadingStates,
         error,
       };

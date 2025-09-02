@@ -1,3 +1,4 @@
+// hooks/useDbCart.ts
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -20,8 +21,8 @@ type RawItem = {
   id: string;
   product_id: string;
   quantity: number;
-  product?: ProductRow | ProductRow[] | null; // alias "product"
-  products?: ProductRow[] | null; // alias "products"
+  product?: ProductRow | ProductRow[] | null;
+  products?: ProductRow[] | null;
 };
 
 async function getOrCreateCartId(userId: string) {
@@ -44,30 +45,29 @@ export function useDbCart(enabled: boolean = true) {
     if (!enabled) return;
 
     try {
-      const { data: userRes, error: uErr } = await supabase.auth.getUser();
-      if (uErr) throw uErr;
-
-      const user = userRes.user;
-      if (!user) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        // אין משתמש – עגלה ריקה
         setCartId(null);
         setItems([]);
         return;
       }
 
-      const cid = await getOrCreateCartId(user.id);
+      const userId = session.user.id;
+      const cid = await getOrCreateCartId(userId);
       setCartId(cid);
 
       const { data, error } = await supabase
         .from("cart_items")
         .select(
           `
-            id,
-            product_id,
-            quantity,
-            product:products!cart_items_product_id_fkey (
-              id, name, price, image_url
-            )
-          `
+          id,
+          product_id,
+          quantity,
+          product:products!cart_items_product_id_fkey ( id, name, price, image_url )
+        `
         )
         .eq("cart_id", cid);
 
@@ -98,16 +98,16 @@ export function useDbCart(enabled: boolean = true) {
     }
   }, [enabled]);
 
-  // טעינה ראשונית
   useEffect(() => {
     if (!enabled) return;
     loadForCurrentUser();
   }, [enabled, loadForCurrentUser]);
 
-  // האזנה לשינויים ב־Auth
   useEffect(() => {
     if (!enabled) return;
-    const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT" || !session) {
         setCartId(null);
         setItems([]);
@@ -118,7 +118,7 @@ export function useDbCart(enabled: boolean = true) {
         await loadForCurrentUser();
       }
     });
-    return () => data.subscription.unsubscribe();
+    return () => subscription.unsubscribe();
   }, [enabled, loadForCurrentUser]);
 
   const count = useMemo(
@@ -131,20 +131,15 @@ export function useDbCart(enabled: boolean = true) {
   );
 
   const addItem = useCallback(
-    async (
-      line: Omit<DbCartLine, "name" | "price" | "image_url"> &
-        Partial<DbCartLine>
-    ) => {
+    async (line: Partial<DbCartLine> & Pick<DbCartLine, "product_id">) => {
       if (!enabled || !cartId) return;
-
-      // optimistic
       setItems((prev) => {
         const idx = prev.findIndex((i) => i.product_id === line.product_id);
         if (idx >= 0) {
           const next = [...prev];
           next[idx] = {
             ...next[idx],
-            quantity: next[idx].quantity + (line.quantity || 1),
+            quantity: next[idx].quantity + Math.max(1, line.quantity || 1),
           };
           return next;
         }
@@ -160,7 +155,6 @@ export function useDbCart(enabled: boolean = true) {
         ];
       });
 
-      // merge in DB (upsert)
       const { data: existing } = await supabase
         .from("cart_items")
         .select("id, quantity")
@@ -171,16 +165,12 @@ export function useDbCart(enabled: boolean = true) {
       const newQty =
         (existing?.quantity || 0) + Math.max(1, line.quantity || 1);
 
-      const { error } = await supabase
+      await supabase
         .from("cart_items")
         .upsert(
           [{ cart_id: cartId, product_id: line.product_id, quantity: newQty }],
-          {
-            onConflict: "cart_id,product_id",
-          }
+          { onConflict: "cart_id,product_id" }
         );
-
-      if (error) console.error("addItem upsert error:", error);
     },
     [enabled, cartId]
   );

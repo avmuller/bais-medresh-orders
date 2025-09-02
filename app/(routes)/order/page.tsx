@@ -32,7 +32,7 @@ function replaceWithSearch(router: ReturnType<typeof useRouter>, url: URL) {
   router.replace(qs ? `${url.pathname}?${qs}` : url.pathname);
 }
 
-/* ------------ Wrapper with Suspense ------------ */
+/* ------------ Wrapper ------------ */
 export default function OrderPage() {
   return (
     <Suspense fallback={null}>
@@ -81,6 +81,7 @@ function OrderBanners() {
   );
 }
 
+/* ------------ utils ------------ */
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
@@ -175,33 +176,34 @@ function OrderPageInner() {
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Auth (לא חוסם טעינת מוצרים)
+  // Auth
   useEffect(() => {
     let mounted = true;
-
-    (async () => {
+    const checkSession = async () => {
       try {
         const { data } = await supabase.auth.getSession();
         if (mounted) setSession(data.session ?? null);
-      } catch (e) {
-        console.error("getSession failed", e);
+      } catch (err) {
+        console.error("Auth check failed:", err);
       }
-    })();
+    };
+    checkSession();
 
-    const { data } = supabase.auth.onAuthStateChange((_event, s) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, s) => {
       if (mounted) {
         setSession(s);
         if (s) setShowLoginPrompt(false);
       }
     });
-
     return () => {
       mounted = false;
-      data.subscription.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
-  // Data: נטען תמיד, בלי תלות באימות
+  // Data – טוען מיידית, לא תלוי ב-auth
   useEffect(() => {
     let cancelled = false;
     const fetchData = async () => {
@@ -211,15 +213,13 @@ function OrderPageInner() {
           .from("categories")
           .select("id,name,parent_id,slug")
           .order("name");
-        if (catErr) console.error(catErr);
-
         const { data: productsData, error: prodErr } = await supabase
           .from("products")
           .select("id,name,price,category_id,image_url,created_at")
           .order("created_at", { ascending: false });
-        if (prodErr) console.error(prodErr);
-
         if (cancelled) return;
+        if (catErr) console.error(catErr);
+        if (prodErr) console.error(prodErr);
         setCategories((categoriesData as Category[]) || []);
         setProducts((productsData as Product[]) || []);
       } finally {
