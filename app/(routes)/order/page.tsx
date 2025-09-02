@@ -99,35 +99,35 @@ function ProductCard({
   onAddToCart: () => void;
 }) {
   return (
-    <article className="group bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-stone-200/80 hover:shadow-lg hover:-translate-y-1 transition-all flex flex-col">
-      <div className="relative aspect-[4/3] bg-white rounded-xl mb-4">
+    <article className="group bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-stone-200/80 hover:shadow-lg hover:-translate-y-1 transition-all flex flex-col">
+      <div className="relative aspect-square bg-white rounded-lg mb-2">
         {product.image_url ? (
           <Image
             src={product.image_url}
             alt={product.name}
             fill
             sizes="(max-width:768px) 50vw, (max-width:1280px) 25vw, 20vw"
-            className="object-contain p-2"
+            className="object-contain p-1"
           />
         ) : (
-          <div className="absolute inset-0 grid place-items-center text-stone-400 text-sm">
+          <div className="absolute inset-0 grid place-items-center text-stone-400 text-xs">
             ללא תמונה
           </div>
         )}
       </div>
-      <h3 className="font-bold text-stone-800 text-base leading-6 line-clamp-2 min-h-[3rem] grow">
+      <h3 className="font-bold text-stone-800 text-sm leading-5 line-clamp-2 min-h-[2.5rem] grow">
         {product.name}
       </h3>
-      <div className="mt-2">
-        <span className="inline-block bg-amber-100 text-amber-800 text-sm font-semibold px-3 py-1 rounded-full">
+      <div className="mt-1">
+        <span className="inline-block bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 rounded-full">
           {Number(product.price).toFixed(2)} ₪
         </span>
       </div>
-      <div className="mt-4 flex items-center justify-center gap-2">
+      <div className="mt-3 flex items-center justify-center gap-1">
         <button
           aria-label="הפחת כמות"
           onClick={() => onQuantityChange(quantity - 1)}
-          className="w-9 h-9 rounded-full border border-stone-300 hover:bg-stone-100 grid place-items-center transition-colors"
+          className="w-7 h-7 rounded-full border border-stone-300 hover:bg-stone-100 grid place-items-center transition-colors text-sm"
         >
           −
         </button>
@@ -136,19 +136,19 @@ function ProductCard({
           min={1}
           value={quantity}
           onChange={(e) => onQuantityChange(parseInt(e.target.value))}
-          className="w-16 h-9 text-center border-stone-300 border rounded-lg py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 transition"
+          className="w-12 h-7 text-center border-stone-300 border rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-amber-400 transition text-sm"
         />
         <button
           aria-label="הוסף כמות"
           onClick={() => onQuantityChange(quantity + 1)}
-          className="w-9 h-9 rounded-full border border-stone-300 hover:bg-stone-100 grid place-items-center transition-colors"
+          className="w-7 h-7 rounded-full border border-stone-300 hover:bg-stone-100 grid place-items-center transition-colors text-sm"
         >
           +
         </button>
       </div>
       <button
         onClick={onAddToCart}
-        className="mt-4 w-full h-11 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 active:scale-[0.98] transition-all whitespace-nowrap"
+        className="mt-3 w-full h-8 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 active:scale-[0.98] transition-all whitespace-nowrap text-sm"
       >
         הוסף לעגלה
       </button>
@@ -510,16 +510,13 @@ function OrderPageInner() {
       </Suspense>
 
       {/* Hero */}
-      <section className="relative py-16 px-4 sm:px-6 lg:px-8 overflow-hidden">
+      <section className="relative py-8 px-4 sm:px-6 lg:px-8 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-l from-amber-100/50 to-yellow-50/50 -z-10" />
         <div className="max-w-7xl mx-auto text-center">
-          <h1 className="text-4xl md:text-6xl font-bold text-stone-800 mb-4 leading-tight">
+          <h1 className="text-2xl md:text-3xl font-bold text-stone-800 mb-2 leading-tight">
             הזמנות לבית המדרש
-            <span className="block text-2xl md:text-3xl font-medium text-amber-600 mt-2">
-              כל מה שהמקום צריך, במקום אחד
-            </span>
           </h1>
-          <p className="text-lg text-stone-600 max-w-3xl mx-auto leading-relaxed">
+          <p className="text-base text-stone-600 max-w-3xl mx-auto leading-relaxed">
             כאן תוכלו להזמין בקלות את כל המוצרים הנחוצים לתפעול השוטף של בית
             המדרש - ממוצרים לקידוש ועד לציוד ניקיון.
           </p>
@@ -527,40 +524,40 @@ function OrderPageInner() {
       </section>
 
       {/* Products grid */}
-      <main className="py-12 px-4 sm:px-6 lg:px-8">
+      <main className="py-8 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-between mb-8">
-            <h2 className="text-3xl font-bold text-stone-800">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-stone-800">
               מוצרים זמינים להזמנה
             </h2>
           </div>
 
-          {loading || authLoading ? ( // <--- הצג טעינה גם בזמן בדיקת האימות
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {Array.from({ length: 8 }).map((_, i) => (
+          {loading || authLoading ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
+              {Array.from({ length: 10 }).map((_, i) => (
                 <div
                   key={i}
-                  className="bg-white rounded-2xl p-5 space-y-4 animate-pulse"
+                  className="bg-white rounded-xl p-3 space-y-2 animate-pulse"
                 >
-                  <div className="bg-stone-200 aspect-[4/3] w-full rounded-xl" />
-                  <div className="bg-stone-200 h-6 w-2/3 rounded" />
-                  <div className="bg-stone-200 h-4 w-1/3 rounded-full" />
-                  <div className="h-10 bg-stone-200 rounded-xl" />
+                  <div className="bg-stone-200 aspect-[4/3] w-full rounded-lg" />
+                  <div className="bg-stone-200 h-5 w-2/3 rounded" />
+                  <div className="bg-stone-200 h-3 w-1/3 rounded-full" />
+                  <div className="h-8 bg-stone-200 rounded-lg" />
                 </div>
               ))}
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="text-center py-16">
-              <div className="text-6xl mb-4">️🕵️</div>
-              <h3 className="text-2xl font-bold text-stone-800 mb-2">
+            <div className="text-center py-12">
+              <div className="text-5xl mb-3">️🕵️</div>
+              <h3 className="text-xl font-bold text-stone-800 mb-1">
                 לא נמצאו מוצרים תואמים
               </h3>
-              <p className="text-stone-600">
+              <p className="text-stone-600 text-sm">
                 נסו לשנות את החיפוש או לבחור קטגוריה אחרת.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
               {filteredProducts.map((product) => (
                 <ProductCard
                   key={product.id}
@@ -608,7 +605,7 @@ function OrderPageInner() {
       )}
 
       {/* Footer */}
-      <footer className="bg-gradient-to-l from-stone-800 to-stone-900 text-white py-16 mt-20">
+      <footer className="bg-gradient-to-l from-stone-800 to-stone-900 text-white py-12 mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center mb-4">
             <div className="bg-gradient-to-br from-yellow-400 to-amber-600 text-white w-12 h-12 rounded-xl flex items-center justify-center">
